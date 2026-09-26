@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>IE Chair - 工站連續計時</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0; padding: 14px;
+      background: #f1f5f9; color: #1e293b;
+    }
+    .card {
+      background: #fff; border-radius: 14px;
+      padding: 16px; margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .header-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px;
+    }
+    .badge {
+      background: #e2e8f0; color: #334155;
+      padding: 5px 10px; border-radius: 6px;
+      font-weight: bold; font-size: 15px;
+    }
+    .switch-link {
+      font-size: 13px; color: #2563eb; text-decoration: none; font-weight: 600;
+    }
+    /* 在製品 WIP 調整卡片 */
+    .wip-panel {
+      text-align: center; background: #eef2ff;
+      border: 1px solid #c7d2fe; border-radius: 12px;
+      padding: 12px;
+    }
+    .wip-title {
+      font-size: 13px; color: #4338ca; font-weight: bold; margin-bottom: 6px;
+    }
+    .wip-counter {
+      display: flex; justify-content: center; align-items: center; gap: 20px;
+    }
+    .wip-btn {
+      width: 46px; height: 46px; border-radius: 50%;
+      border: none; font-size: 24px; font-weight: bold;
+      background: #4f46e5; color: white; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .wip-btn:active { transform: scale(0.92); }
+    .wip-val {
+      font-size: 36px; font-weight: 800; min-width: 50px; color: #1e1b4b;
+    }
+    /* 計時與控制 */
+    .timer-display {
+      font-family: monospace; font-size: 46px; font-weight: bold;
+      text-align: center; margin: 15px 0; color: #0f172a;
+    }
+    .main-btn {
+      width: 100%; padding: 18px; border: none; border-radius: 12px;
+      font-size: 20px; font-weight: bold; color: white;
+      cursor: pointer; touch-action: manipulation;
+    }
+    .btn-start { background: #10b981; }
+    .btn-start:active { background: #059669; }
+    .btn-finish { background: #ef4444; }
+    .btn-finish:active { background: #dc2626; }
+    .input-field {
+      width: 100%; padding: 10px; font-size: 16px;
+      border: 1px solid #cbd5e1; border-radius: 8px; margin-top: 4px;
+    }
+    #msg {
+      text-align: center; font-size: 14px; font-weight: bold; margin-top: 10px;
+    }
+    /* 歷史次數清單 */
+    .history-title {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 14px; font-weight: bold; color: #475569; margin-bottom: 8px;
+    }
+    .history-list {
+      max-height: 180px; overflow-y: auto; font-size: 13px;
+    }
+    .history-item {
+      display: flex; justify-content: space-between; padding: 7px 0;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .history-item:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+
+  <!-- 工站資訊 -->
+  <div class="card">
+    <div class="header-bar">
+      <div>
+        <span class="badge" id="groupBadge">--</span>
+        <span class="badge" id="stationBadge">--</span>
+      </div>
+      <a href="qrcode.html" class="switch-link">切換工站 ➔</a>
+    </div>
+    <div style="margin-top:8px;">
+      <label style="font-size:13px; color:#64748b;">當前組裝產品序號：</label>
+      <input type="text" id="productIdInput" class="input-field" value="P01">
+    </div>
+  </div>
+
+  <!-- 站前半成品待加工量 (WIP) -->
+  <div class="card">
+    <div class="wip-panel">
+      <div class="wip-title">【站前半成品庫存 (待加工)】</div>
+      <div class="wip-counter">
+        <button class="wip-btn" id="btnMinusWip">-</button>
+        <span class="wip-val" id="wipText">0</span>
+        <button class="wip-btn" id="btnPlusWip">+</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 計時主控區 (支援多次連續) -->
+  <div class="card">
+    <div class="timer-display" id="timerDisplay">00:00.0</div>
+    <button class="main-btn btn-start" id="mainActionBtn">▶ 開始第 1 次作業</button>
+    <div id="msg"></div>
+  </div>
+
+  <!-- 本工站多次計時歷史清單 -->
+  <div class="card">
+    <div class="history-title">
+      <span>本站完工歷史紀錄</span>
+      <span id="cycleTotalBadge" style="color:#2563eb;">累計完成：0 件</span>
+    </div>
+    <div class="history-list" id="historyList">
+      <div style="text-align:center; color:#94a3b8; padding: 10px;">尚未開始作業</div>
+    </div>
+  </div>
+
+<script>
+const SUPABASE_URL = "https://fqbsrcbxtmagczykoesv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
+
+const urlParams = new URLSearchParams(window.location.search);
+const groupId = urlParams.get("group") || "G01";
+const stationId = urlParams.get("station") || "ST01";
+const defaultProduct = urlParams.get("product") || "P01";
+
+document.getElementById("groupBadge").textContent = "組別: " + groupId;
+document.getElementById("stationBadge").textContent = "工站: " + stationId;
+document.getElementById("productIdInput").value = defaultProduct;
+
+let nextStationId = null;
+let currentWip = 0;
+let wipRecordId = null;
+let isWorking = false;
+let startTime = null;
+let timerInterval = null;
+let currentEventId = null;
+let wipBeforeStart = 0;
+
+// 多次計時計數器
+let completedCount = 0;
+
+// 初始化
+async function init() {
+  showMsg("讀取工站中...", "#64748b");
+  try {
+    // 1. 抓下一站是誰 (為了完成時自動推料)
+    const flowRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const flowData = await flowRes.json();
+    if (flowData.length > 0) {
+      nextStationId = flowData[0].next_station_id;
+    }
+
+    // 2. 抓 WIP
+    await fetchWip();
+    showMsg("就緒，隨時可開始作業", "#10b981");
+  } catch (err) {
+    showMsg("初始化失敗：" + err.message, "#ef4444");
+  }
+}
+
+async function fetchWip() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
+    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+  );
+  const data = await res.json();
+  if (data.length > 0) {
+    wipRecordId = data[0].id;
+    currentWip = data[0].input_wip || 0;
+  } else {
+    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json", Prefer: "return=representation"
+      },
+      body: JSON.stringify({ group_id: groupId, station_id: stationId, input_wip: 0, output_wip: 0 })
+    });
+    const created = await insertRes.json();
+    wipRecordId = created[0].id;
+    currentWip = 0;
+  }
+  document.getElementById("wipText").textContent = currentWip;
+}
+
+// WIP 手動調整
+async function updateWip(newVal) {
+  if (newVal < 0) newVal = 0;
+  currentWip = newVal;
+  document.getElementById("wipText").textContent = currentWip;
+
+  await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ input_wip: currentWip, updated_at: new Date().toISOString() })
+  });
+}
+document.getElementById("btnPlusWip").onclick = () => updateWip(currentWip + 1);
+document.getElementById("btnMinusWip").onclick = () => updateWip(currentWip - 1);
+
+// 主操作按鈕：開始 / 完成 (支援多次計時)
+const mainBtn = document.getElementById("mainActionBtn");
+mainBtn.addEventListener("click", async function() {
+  if (!isWorking) {
+    // --- 開始作業 ---
+    const prodId = document.getElementById("productIdInput").value.trim() || `P${completedCount + 1}`;
+    wipBeforeStart = currentWip;
+
+    mainBtn.disabled = true;
+    showMsg("開工扣料中...", "#64748b");
+
+    try {
+      if (currentWip > 0) {
+        await updateWip(currentWip - 1);
+      }
+
+      startTime = new Date();
+      const eventRes = await fetch(`${SUPABASE_URL}/rest/v1/event`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json", Prefer: "return=representation"
+        },
+        body: JSON.stringify({
+          group_id: groupId,
+          station_id: stationId,
+          product_id: prodId,
+          start_time: startTime.toISOString(),
+          status: "IN_PROGRESS",
+          wip_before_start: wipBeforeStart
+        })
+      });
+      const created = await eventRes.json();
+      currentEventId = created[0].id;
+
+      isWorking = true;
+      mainBtn.disabled = false;
+      mainBtn.textContent = `■ 完成此件作業 (${prodId})`;
+      mainBtn.className = "main-btn btn-finish";
+      showMsg("計時進行中...", "#10b981");
+
+      startTimer();
+    } catch (err) {
+      mainBtn.disabled = false;
+      showMsg("啟動失敗：" + err.message, "#ef4444");
+    }
+  } else {
+    // --- 完成作業 ---
+    mainBtn.disabled = true;
+    showMsg("儲存紀錄並送出半成品...", "#64748b");
+    clearInterval(timerInterval);
+
+    const finishTime = new Date();
+    const durationSec = Math.round((finishTime - startTime) / 1000);
+    const finishedProduct = document.getElementById("productIdInput").value.trim();
+
+    try {
+      // 1. 更新本筆 event
+      await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${currentEventId}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          finish_time: finishTime.toISOString(),
+          duration_sec: durationSec,
+          status: "COMPLETED",
+          wip_after_finish: currentWip
+        })
+      });
+
+      // 2. 將半成品推至下一站
+      if (nextStationId) {
+        await sendWipToNextStation(nextStationId);
+      }
+
+      // 3. 記錄到畫面歷史清單
+      completedCount++;
+      addHistoryItem(completedCount, finishedProduct, durationSec, wipBeforeStart);
+      document.getElementById("cycleTotalBadge").textContent = `累計完成：${completedCount} 件`;
+
+      // 4. 自動遞增產品編號 (例如 P01 -> P02)
+      autoIncrementProductInput();
+
+      showMsg(`✓ 第 ${completedCount} 件完成！耗時 ${durationSec} 秒`, "#10b981");
+
+      // 5. 立即準備好下一次計時！
+      isWorking = false;
+      mainBtn.disabled = false;
+      mainBtn.textContent = `▶ 開始第 ${completedCount + 1} 次作業`;
+      mainBtn.className = "main-btn btn-start";
+      document.getElementById("timerDisplay").textContent = "00:00.0";
+    } catch (err) {
+      mainBtn.disabled = false;
+      showMsg("完成失敗：" + err.message, "#ef4444");
+    }
+  }
+});
+
+// 自動跳號 (P01 -> P02, P9 -> P10)
+function autoIncrementProductInput() {
+  const input = document.getElementById("productIdInput");
+  const val = input.value.trim();
+  const match = val.match(/^([A-Za-z]+)(\d+)$/);
+  if (match) {
+    const prefix = match[1];
+    const num = parseInt(match[2], 10) + 1;
+    const pad = match[2].length;
+    input.value = prefix + String(num).padStart(pad, '0');
+  } else {
+    input.value = `P${completedCount + 1}`;
+  }
+}
+
+// 增加歷史項目
+function addHistoryItem(count, prod, sec, wip) {
+  const list = document.getElementById("historyList");
+  if (count === 1) list.innerHTML = ""; // 清空提示
+
+  const item = document.createElement("div");
+  item.className = "history-item";
+  item.innerHTML = `
+    <span><strong>#${count}</strong> (${prod})</span>
+    <span>工時: <b>${sec}秒</b></span>
+    <span style="color:#64748b;">開工WIP: ${wip}</span>
+  `;
+  list.insertBefore(item, list.firstChild);
+}
+
+// 推進下一站
+async function sendWipToNextStation(nextSt) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${nextSt}&select=*`,
+    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+  );
+  const data = await res.json();
+  if (data.length > 0) {
+    const curNextWip = data[0].input_wip || 0;
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${data[0].id}`, {
+      method: "PATCH",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ input_wip: curNextWip + 1, updated_at: new Date().toISOString() })
+    });
+  }
+}
+
+function startTimer() {
+  const startMs = Date.now();
+  timerInterval = setInterval(() => {
+    const delta = Date.now() - startMs;
+    const sec = Math.floor(delta / 1000);
+    const ms = Math.floor((delta % 1000) / 100);
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    document.getElementById("timerDisplay").textContent = `${m}:${s}.${ms}`;
+  }, 100);
+}
+
+function showMsg(text, color) {
+  const el = document.getElementById("msg");
+  el.textContent = text;
+  el.style.color = color;
+}
+
+init();
+</script>
+</body>
+</html>

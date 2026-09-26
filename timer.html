@@ -22,35 +22,47 @@
     }
     .badge {
       background: #e2e8f0; color: #334155;
-      padding: 5px 10px; border-radius: 6px;
-      font-weight: bold; font-size: 15px;
+      padding: 5px 12px; border-radius: 6px;
+      font-weight: bold; font-size: 16px;
     }
     .switch-link {
       font-size: 13px; color: #2563eb; text-decoration: none; font-weight: 600;
     }
-    /* 在製品 WIP 調整卡片 */
-    .wip-panel {
-      text-align: center; background: #eef2ff;
-      border: 1px solid #c7d2fe; border-radius: 12px;
-      padding: 12px;
+    
+    /* 站前/站後 雙 WIP 調整面板 */
+    .wip-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     }
+    .wip-box {
+      text-align: center; border-radius: 12px; padding: 12px 8px;
+    }
+    .wip-in { background: #eef2ff; border: 1px solid #c7d2fe; }
+    .wip-out { background: #ecfdf5; border: 1px solid #a7f3d0; }
+    
     .wip-title {
-      font-size: 13px; color: #4338ca; font-weight: bold; margin-bottom: 6px;
+      font-size: 13px; font-weight: bold; margin-bottom: 6px;
     }
+    .wip-in .wip-title { color: #4338ca; }
+    .wip-out .wip-title { color: #065f46; }
+
     .wip-counter {
-      display: flex; justify-content: center; align-items: center; gap: 20px;
+      display: flex; justify-content: center; align-items: center; gap: 10px;
     }
     .wip-btn {
-      width: 46px; height: 46px; border-radius: 50%;
-      border: none; font-size: 24px; font-weight: bold;
-      background: #4f46e5; color: white; cursor: pointer;
+      width: 40px; height: 40px; border-radius: 50%;
+      border: none; font-size: 22px; font-weight: bold;
+      color: white; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       touch-action: manipulation;
     }
     .wip-btn:active { transform: scale(0.92); }
+    .btn-in { background: #4f46e5; }
+    .btn-out { background: #059669; }
+
     .wip-val {
-      font-size: 36px; font-weight: 800; min-width: 50px; color: #1e1b4b;
+      font-size: 32px; font-weight: 800; min-width: 40px; color: #0f172a;
     }
+
     /* 計時與控制 */
     .timer-display {
       font-family: monospace; font-size: 46px; font-weight: bold;
@@ -72,7 +84,8 @@
     #msg {
       text-align: center; font-size: 14px; font-weight: bold; margin-top: 10px;
     }
-    /* 歷史次數清單 */
+
+    /* 歷史清單 */
     .history-title {
       display: flex; justify-content: space-between; align-items: center;
       font-size: 14px; font-weight: bold; color: #475569; margin-bottom: 8px;
@@ -84,7 +97,6 @@
       display: flex; justify-content: space-between; padding: 7px 0;
       border-bottom: 1px solid #f1f5f9;
     }
-    .history-item:last-child { border-bottom: none; }
   </style>
 </head>
 <body>
@@ -104,14 +116,26 @@
     </div>
   </div>
 
-  <!-- 站前半成品待加工量 (WIP) -->
+  <!-- 站前與站後 雙 WIP 調整器 -->
   <div class="card">
-    <div class="wip-panel">
-      <div class="wip-title">【站前半成品庫存 (待加工)】</div>
-      <div class="wip-counter">
-        <button class="wip-btn" id="btnMinusWip">-</button>
-        <span class="wip-val" id="wipText">0</span>
-        <button class="wip-btn" id="btnPlusWip">+</button>
+    <div class="wip-grid">
+      <!-- 站前 WIP (待加工) -->
+      <div class="wip-box wip-in">
+        <div class="wip-title">📥 站前待加工</div>
+        <div class="wip-counter">
+          <button class="wip-btn btn-in" id="btnMinusIn">-</button>
+          <span class="wip-val" id="wipInText">0</span>
+          <button class="wip-btn btn-in" id="btnPlusIn">+</button>
+        </div>
+      </div>
+      <!-- 站後 WIP (已完成) -->
+      <div class="wip-box wip-out">
+        <div class="wip-title">📤 站後已完成</div>
+        <div class="wip-counter">
+          <button class="wip-btn btn-out" id="btnMinusOut">-</button>
+          <span class="wip-val" id="wipOutText">0</span>
+          <button class="wip-btn btn-out" id="btnPlusOut">+</button>
+        </div>
       </div>
     </div>
   </div>
@@ -143,37 +167,32 @@ const groupId = urlParams.get("group") || "G01";
 const stationId = urlParams.get("station") || "ST01";
 const defaultProduct = urlParams.get("product") || "P01";
 
-document.getElementById("groupBadge").textContent = "組別: " + groupId;
-document.getElementById("stationBadge").textContent = "工站: " + stationId;
+document.getElementById("groupBadge").textContent = groupId;
+document.getElementById("stationBadge").textContent = stationId;
 document.getElementById("productIdInput").value = defaultProduct;
 
 let nextStationId = null;
-let currentWip = 0;
+let currentInWip = 0;
+let currentOutWip = 0;
 let wipRecordId = null;
 let isWorking = false;
 let startTime = null;
 let timerInterval = null;
 let currentEventId = null;
 let wipBeforeStart = 0;
-
-// 多次計時計數器
 let completedCount = 0;
 
 // 初始化
 async function init() {
   showMsg("讀取工站中...", "#64748b");
   try {
-    // 1. 抓下一站是誰 (為了完成時自動推料)
     const flowRes = await fetch(
       `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     const flowData = await flowRes.json();
-    if (flowData.length > 0) {
-      nextStationId = flowData[0].next_station_id;
-    }
+    if (flowData.length > 0) nextStationId = flowData[0].next_station_id;
 
-    // 2. 抓 WIP
     await fetchWip();
     showMsg("就緒，隨時可開始作業", "#10b981");
   } catch (err) {
@@ -189,7 +208,8 @@ async function fetchWip() {
   const data = await res.json();
   if (data.length > 0) {
     wipRecordId = data[0].id;
-    currentWip = data[0].input_wip || 0;
+    currentInWip = data[0].input_wip || 0;
+    currentOutWip = data[0].output_wip || 0;
   } else {
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
       method: "POST",
@@ -201,16 +221,21 @@ async function fetchWip() {
     });
     const created = await insertRes.json();
     wipRecordId = created[0].id;
-    currentWip = 0;
+    currentInWip = 0;
+    currentOutWip = 0;
   }
-  document.getElementById("wipText").textContent = currentWip;
+  document.getElementById("wipInText").textContent = currentInWip;
+  document.getElementById("wipOutText").textContent = currentOutWip;
 }
 
-// WIP 手動調整
-async function updateWip(newVal) {
-  if (newVal < 0) newVal = 0;
-  currentWip = newVal;
-  document.getElementById("wipText").textContent = currentWip;
+// WIP 手動調整函數
+async function updateWipDb(newIn, newOut) {
+  if (newIn < 0) newIn = 0;
+  if (newOut < 0) newOut = 0;
+  currentInWip = newIn;
+  currentOutWip = newOut;
+  document.getElementById("wipInText").textContent = currentInWip;
+  document.getElementById("wipOutText").textContent = currentOutWip;
 
   await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
     method: "PATCH",
@@ -218,26 +243,35 @@ async function updateWip(newVal) {
       apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ input_wip: currentWip, updated_at: new Date().toISOString() })
+    body: JSON.stringify({
+      input_wip: currentInWip,
+      output_wip: currentOutWip,
+      updated_at: new Date().toISOString()
+    })
   });
 }
-document.getElementById("btnPlusWip").onclick = () => updateWip(currentWip + 1);
-document.getElementById("btnMinusWip").onclick = () => updateWip(currentWip - 1);
 
-// 主操作按鈕：開始 / 完成 (支援多次計時)
+// 站前與站後的加減監聽
+document.getElementById("btnPlusIn").onclick = () => updateWipDb(currentInWip + 1, currentOutWip);
+document.getElementById("btnMinusIn").onclick = () => updateWipDb(currentInWip - 1, currentOutWip);
+document.getElementById("btnPlusOut").onclick = () => updateWipDb(currentInWip, currentOutWip + 1);
+document.getElementById("btnMinusOut").onclick = () => updateWipDb(currentInWip, currentOutWip - 1);
+
+// 主操作按鈕：開始 (站前-1) / 完成 (站後+1)
 const mainBtn = document.getElementById("mainActionBtn");
 mainBtn.addEventListener("click", async function() {
   if (!isWorking) {
     // --- 開始作業 ---
     const prodId = document.getElementById("productIdInput").value.trim() || `P${completedCount + 1}`;
-    wipBeforeStart = currentWip;
+    wipBeforeStart = currentInWip;
 
     mainBtn.disabled = true;
     showMsg("開工扣料中...", "#64748b");
 
     try {
-      if (currentWip > 0) {
-        await updateWip(currentWip - 1);
+      // 站前半成品自動扣除 1 件
+      if (currentInWip > 0) {
+        await updateWipDb(currentInWip - 1, currentOutWip);
       }
 
       startTime = new Date();
@@ -273,7 +307,7 @@ mainBtn.addEventListener("click", async function() {
   } else {
     // --- 完成作業 ---
     mainBtn.disabled = true;
-    showMsg("儲存紀錄並送出半成品...", "#64748b");
+    showMsg("完工紀錄中...", "#64748b");
     clearInterval(timerInterval);
 
     const finishTime = new Date();
@@ -281,7 +315,10 @@ mainBtn.addEventListener("click", async function() {
     const finishedProduct = document.getElementById("productIdInput").value.trim();
 
     try {
-      // 1. 更新本筆 event
+      // 1. 站後半成品自動 + 1
+      await updateWipDb(currentInWip, currentOutWip + 1);
+
+      // 2. 更新 event 紀錄
       await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${currentEventId}`, {
         method: "PATCH",
         headers: {
@@ -292,21 +329,16 @@ mainBtn.addEventListener("click", async function() {
           finish_time: finishTime.toISOString(),
           duration_sec: durationSec,
           status: "COMPLETED",
-          wip_after_finish: currentWip
+          wip_after_finish: currentOutWip
         })
       });
-
-      // 2. 將半成品推至下一站
-      if (nextStationId) {
-        await sendWipToNextStation(nextStationId);
-      }
 
       // 3. 記錄到畫面歷史清單
       completedCount++;
       addHistoryItem(completedCount, finishedProduct, durationSec, wipBeforeStart);
       document.getElementById("cycleTotalBadge").textContent = `累計完成：${completedCount} 件`;
 
-      // 4. 自動遞增產品編號 (例如 P01 -> P02)
+      // 4. 自動跳號至下一件 (P01 -> P02)
       autoIncrementProductInput();
 
       showMsg(`✓ 第 ${completedCount} 件完成！耗時 ${durationSec} 秒`, "#10b981");
@@ -324,7 +356,6 @@ mainBtn.addEventListener("click", async function() {
   }
 });
 
-// 自動跳號 (P01 -> P02, P9 -> P10)
 function autoIncrementProductInput() {
   const input = document.getElementById("productIdInput");
   const val = input.value.trim();
@@ -339,39 +370,18 @@ function autoIncrementProductInput() {
   }
 }
 
-// 增加歷史項目
 function addHistoryItem(count, prod, sec, wip) {
   const list = document.getElementById("historyList");
-  if (count === 1) list.innerHTML = ""; // 清空提示
+  if (count === 1) list.innerHTML = "";
 
   const item = document.createElement("div");
   item.className = "history-item";
   item.innerHTML = `
     <span><strong>#${count}</strong> (${prod})</span>
     <span>工時: <b>${sec}秒</b></span>
-    <span style="color:#64748b;">開工WIP: ${wip}</span>
+    <span style="color:#64748b;">開工前WIP: ${wip}</span>
   `;
   list.insertBefore(item, list.firstChild);
-}
-
-// 推進下一站
-async function sendWipToNextStation(nextSt) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${nextSt}&select=*`,
-    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
-  );
-  const data = await res.json();
-  if (data.length > 0) {
-    const curNextWip = data[0].input_wip || 0;
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${data[0].id}`, {
-      method: "PATCH",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ input_wip: curNextWip + 1, updated_at: new Date().toISOString() })
-    });
-  }
 }
 
 function startTimer() {

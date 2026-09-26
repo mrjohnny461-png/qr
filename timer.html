@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>IE Chair - 工站連續計時</title>
+  <title>IE Chair - 工站即時同步計時端</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -25,11 +25,33 @@
       padding: 5px 12px; border-radius: 6px;
       font-weight: bold; font-size: 16px;
     }
+    .flow-badge {
+      font-size: 12px; color: #64748b; margin-top: 4px;
+    }
+    
+    /* 即時連線狀態燈 */
+    .sync-status {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: bold; color: #065f46;
+      background: #ecfdf5; border: 1px solid #a7f3d0;
+      padding: 3px 8px; border-radius: 12px;
+    }
+    .pulse-dot {
+      width: 8px; height: 8px; background-color: #10b981;
+      border-radius: 50%; display: inline-block;
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.6; }
+      100% { transform: scale(0.95); opacity: 1; }
+    }
+
     .switch-link {
       font-size: 13px; color: #2563eb; text-decoration: none; font-weight: 600;
     }
     
-    /* 站前/站後 雙 WIP 調整面板 */
+    /* 站前/站後 雙 WIP 面板 */
     .wip-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     }
@@ -108,8 +130,12 @@
         <span class="badge" id="groupBadge">--</span>
         <span class="badge" id="stationBadge">--</span>
       </div>
-      <a href="qrcode.html" class="switch-link">切換工站 ➔</a>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="sync-status"><span class="pulse-dot"></span>即時同步中</span>
+        <a href="qrcode.html" class="switch-link">切換 ➔</a>
+      </div>
     </div>
+    <div class="flow-badge" id="nextStationNotice">物料接續站：載入中...</div>
     <div style="margin-top:8px;">
       <label style="font-size:13px; color:#64748b;">當前組裝產品序號：</label>
       <input type="text" id="productIdInput" class="input-field" value="P01">
@@ -119,7 +145,7 @@
   <!-- 站前與站後 雙 WIP 調整器 -->
   <div class="card">
     <div class="wip-grid">
-      <!-- 站前 WIP (待加工) -->
+      <!-- 站前 WIP (待本站加工) -->
       <div class="wip-box wip-in">
         <div class="wip-title">📥 站前待加工</div>
         <div class="wip-counter">
@@ -128,7 +154,7 @@
           <button class="wip-btn btn-in" id="btnPlusIn">+</button>
         </div>
       </div>
-      <!-- 站後 WIP (已完成) -->
+      <!-- 站後 WIP (本站完工待移交) -->
       <div class="wip-box wip-out">
         <div class="wip-title">📤 站後已完成</div>
         <div class="wip-counter">
@@ -140,14 +166,14 @@
     </div>
   </div>
 
-  <!-- 計時主控區 (支援多次連續) -->
+  <!-- 計時主控區 -->
   <div class="card">
     <div class="timer-display" id="timerDisplay">00:00.0</div>
     <button class="main-btn btn-start" id="mainActionBtn">▶ 開始第 1 次作業</button>
     <div id="msg"></div>
   </div>
 
-  <!-- 本工站多次計時歷史清單 -->
+  <!-- 歷史清單 -->
   <div class="card">
     <div class="history-title">
       <span>本站完工歷史紀錄</span>
@@ -184,22 +210,32 @@ let completedCount = 0;
 
 // 初始化
 async function init() {
-  showMsg("讀取工站中...", "#64748b");
+  showMsg("連線同步中...", "#64748b");
   try {
     const flowRes = await fetch(
       `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     const flowData = await flowRes.json();
-    if (flowData.length > 0) nextStationId = flowData[0].next_station_id;
+    if (flowData.length > 0 && flowData[0].next_station_id) {
+      nextStationId = flowData[0].next_station_id;
+      document.getElementById("nextStationNotice").textContent = `➔ 物料接續下一站：${nextStationId}`;
+    } else {
+      nextStationId = null;
+      document.getElementById("nextStationNotice").textContent = `➔ 產線最終站（無後續工站）`;
+    }
 
     await fetchWip();
     showMsg("就緒，隨時可開始作業", "#10b981");
+
+    // 🌟 每 2 秒全自動雙向同步（前站推料即時跳數字、大螢幕清空即時歸零）
+    setInterval(autoSyncLive, 2000);
   } catch (err) {
     showMsg("初始化失敗：" + err.message, "#ef4444");
   }
 }
 
+// 讀取/建立 WIP 庫存
 async function fetchWip() {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
@@ -228,7 +264,47 @@ async function fetchWip() {
   document.getElementById("wipOutText").textContent = currentOutWip;
 }
 
-// WIP 手動調整函數
+// 🌟 全自動雙向同步核心（偵測大螢幕歸零與前站送料）
+async function autoSyncLive() {
+  if (!wipRecordId) return;
+
+  try {
+    // 1. 同步最新 WIP 庫存數字
+    const wipRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}&select=input_wip,output_wip`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const wipData = await wipRes.json();
+    if (wipData.length > 0) {
+      currentInWip = wipData[0].input_wip || 0;
+      currentOutWip = wipData[0].output_wip || 0;
+      document.getElementById("wipInText").textContent = currentInWip;
+      document.getElementById("wipOutText").textContent = currentOutWip;
+    }
+
+    // 2. 檢查大螢幕是否按下了「清空紀錄」
+    if (!isWorking && completedCount > 0) {
+      const eventRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&station_id=eq.${stationId}&select=id`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const evList = await eventRes.json();
+      // 如果本站原本有完工紀錄，但資料庫裡已經被清空成 0 筆了
+      if (evList.length === 0) {
+        completedCount = 0;
+        document.getElementById("cycleTotalBadge").textContent = "累計完成：0 件";
+        document.getElementById("historyList").innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">後台已重置，準備新一輪競賽</div>`;
+        document.getElementById("productIdInput").value = "P01";
+        mainBtn.textContent = "▶ 開始第 1 次作業";
+        mainBtn.className = "main-btn btn-start";
+        document.getElementById("timerDisplay").textContent = "00:00.0";
+        showMsg("✓ 後台已清空歸零，可重新開始！", "#10b981");
+      }
+    }
+  } catch(e) {}
+}
+
+// 手動調整 WIP
 async function updateWipDb(newIn, newOut) {
   if (newIn < 0) newIn = 0;
   if (newOut < 0) newOut = 0;
@@ -251,13 +327,12 @@ async function updateWipDb(newIn, newOut) {
   });
 }
 
-// 站前與站後的加減監聽
 document.getElementById("btnPlusIn").onclick = () => updateWipDb(currentInWip + 1, currentOutWip);
 document.getElementById("btnMinusIn").onclick = () => updateWipDb(currentInWip - 1, currentOutWip);
 document.getElementById("btnPlusOut").onclick = () => updateWipDb(currentInWip, currentOutWip + 1);
 document.getElementById("btnMinusOut").onclick = () => updateWipDb(currentInWip, currentOutWip - 1);
 
-// 主操作按鈕：開始 (站前-1) / 完成 (站後+1)
+// 主操作按鈕：開始 (站前-1) / 完成 (站後+1 並推送下一站站前+1)
 const mainBtn = document.getElementById("mainActionBtn");
 mainBtn.addEventListener("click", async function() {
   if (!isWorking) {
@@ -269,7 +344,6 @@ mainBtn.addEventListener("click", async function() {
     showMsg("開工扣料中...", "#64748b");
 
     try {
-      // 站前半成品自動扣除 1 件
       if (currentInWip > 0) {
         await updateWipDb(currentInWip - 1, currentOutWip);
       }
@@ -307,7 +381,7 @@ mainBtn.addEventListener("click", async function() {
   } else {
     // --- 完成作業 ---
     mainBtn.disabled = true;
-    showMsg("完工紀錄中...", "#64748b");
+    showMsg("完工推送至下一站...", "#64748b");
     clearInterval(timerInterval);
 
     const finishTime = new Date();
@@ -315,10 +389,12 @@ mainBtn.addEventListener("click", async function() {
     const finishedProduct = document.getElementById("productIdInput").value.trim();
 
     try {
-      // 1. 站後半成品自動 + 1
       await updateWipDb(currentInWip, currentOutWip + 1);
 
-      // 2. 更新 event 紀錄
+      if (nextStationId) {
+        await pushWipToNextStation(nextStationId);
+      }
+
       await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${currentEventId}`, {
         method: "PATCH",
         headers: {
@@ -333,17 +409,14 @@ mainBtn.addEventListener("click", async function() {
         })
       });
 
-      // 3. 記錄到畫面歷史清單
       completedCount++;
       addHistoryItem(completedCount, finishedProduct, durationSec, wipBeforeStart);
       document.getElementById("cycleTotalBadge").textContent = `累計完成：${completedCount} 件`;
 
-      // 4. 自動跳號至下一件 (P01 -> P02)
       autoIncrementProductInput();
 
-      showMsg(`✓ 第 ${completedCount} 件完成！耗時 ${durationSec} 秒`, "#10b981");
+      showMsg(`✓ 第 ${completedCount} 件完成！已推送至下一站`, "#10b981");
 
-      // 5. 立即準備好下一次計時！
       isWorking = false;
       mainBtn.disabled = false;
       mainBtn.textContent = `▶ 開始第 ${completedCount + 1} 次作業`;
@@ -355,6 +428,30 @@ mainBtn.addEventListener("click", async function() {
     }
   }
 });
+
+async function pushWipToNextStation(nextSt) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${nextSt}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const data = await res.json();
+    if (data.length > 0) {
+      const targetId = data[0].id;
+      const targetInputWip = (data[0].input_wip || 0) + 1;
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${targetId}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input_wip: targetInputWip, updated_at: new Date().toISOString() })
+      });
+    }
+  } catch(e) {
+    console.error("推送失敗", e);
+  }
+}
 
 function autoIncrementProductInput() {
   const input = document.getElementById("productIdInput");

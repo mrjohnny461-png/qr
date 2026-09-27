@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>IE Chair - 工站齊套管制計時端</title>
+  <title>IE Chair - 工站即時同步計時端</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -71,17 +71,27 @@
     .wip-out .wip-title { color: #065f46; }
     .wip-out .wip-subtitle { color: #059669; }
 
+    .wip-counter {
+      display: flex; justify-content: center; align-items: center; gap: 8px;
+    }
+    .wip-btn {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: none; font-size: 22px; font-weight: bold;
+      color: white; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .wip-btn:active { transform: scale(0.92); }
+    .btn-in { background: #4f46e5; }
+    .btn-out { background: #059669; }
+
     .wip-val {
       font-size: 32px; font-weight: 800; min-width: 40px; color: #0f172a;
     }
 
-    /* 齊套各來源零件清單看板 */
-    .kitting-list {
-      margin-top: 10px; background: #fafafa; border: 1px dashed #cbd5e1;
-      border-radius: 8px; padding: 10px; font-size: 12px;
-    }
-    .kitting-item {
-      display: flex; justify-content: space-between; padding: 3px 0;
+    .init-hint {
+      font-size: 11px; color: #4338ca; background: #e0e7ff;
+      padding: 4px 8px; border-radius: 6px; margin-top: 8px; text-align: center;
     }
 
     /* 計時與控制 */
@@ -137,7 +147,7 @@
         <span class="badge" id="stationBadge">--</span>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
-        <span class="sync-status"><span class="pulse-dot"></span>齊套監控中</span>
+        <span class="sync-status"><span class="pulse-dot"></span>即時同步中</span>
         <a href="qrcode.html" class="switch-link">切換 ➔</a>
       </div>
     </div>
@@ -148,29 +158,34 @@
     </div>
   </div>
 
-  <!-- 站前與站後 WIP 狀態 -->
+  <!-- 站前與站後 WIP 狀態 (支援開工前設定初始備料) -->
   <div class="card">
     <div class="wip-grid">
+      <!-- 站前待加工 (可點擊 +/- 設定初始備料) -->
       <div class="wip-box wip-in">
-        <div class="wip-title">📥 站前齊套可做數</div>
-        <div class="wip-subtitle" id="inSubtitle">檢查中...</div>
-        <div class="wip-val" id="wipInText">0</div>
+        <div class="wip-title">📥 站前待加工</div>
+        <div class="wip-subtitle" id="inSubtitle">可用半成品</div>
+        <div class="wip-counter">
+          <button class="wip-btn btn-in" id="btnMinusIn">-</button>
+          <span class="wip-val" id="wipInText">0</span>
+          <button class="wip-btn btn-in" id="btnPlusIn">+</button>
+        </div>
       </div>
+      <!-- 站後已完成 -->
       <div class="wip-box wip-out">
         <div class="wip-title">📤 站後已完成</div>
-        <div class="wip-subtitle">本站完工數</div>
-        <div class="wip-val" id="wipOutText">0</div>
+        <div class="wip-subtitle">累計完工數</div>
+        <div class="wip-counter">
+          <button class="wip-btn btn-out" id="btnMinusOut">-</button>
+          <span class="wip-val" id="wipOutText">0</span>
+          <button class="wip-btn btn-out" id="btnPlusOut">+</button>
+        </div>
       </div>
     </div>
-
-    <!-- 齊套清單 (若有前置站則顯示) -->
-    <div class="kitting-list" id="kittingBox" style="display:none;">
-      <div style="font-weight:bold; margin-bottom:6px; color:#334155;">各前置來源零件到料狀態：</div>
-      <div id="kittingListContainer"></div>
-    </div>
+    <div class="init-hint">💡 開工前請清點桌上半成品，可點擊上方 [ + ] [ - ] 設定初始備料</div>
   </div>
 
-  <!-- 計時主控區 -->
+  <!-- 計時主控區 (支援斷料禁止計時) -->
   <div class="card">
     <div class="timer-display" id="timerDisplay">00:00.0</div>
     <button class="main-btn btn-start" id="mainActionBtn">▶ 開始第 1 次作業</button>
@@ -201,12 +216,14 @@ document.getElementById("groupBadge").textContent = groupId;
 document.getElementById("stationBadge").textContent = stationId;
 document.getElementById("productIdInput").value = defaultProduct;
 
-let isRootStation = false;     // 是否為起點工站
+let isRootStation = false;     // 是否為起點工站 (無前置站)
 let feederStations = [];       // 前置工站清單
 let nextStationId = null;      // 下一站代號
 
-let kitAvailableCount = 0;     // 齊套可做數
-let localCompletedCount = 0;   // 🌟 本地可靠計數器，絕不被非同步清空
+let currentInWip = 0;          // 站前可用庫存 (初始備料 + 接收 - 消耗)
+let currentOutWip = 0;         // 站後完工數
+let wipRecordId = null;
+
 let isWorking = false;
 let startTime = null;
 let timerInterval = null;
@@ -215,118 +232,90 @@ let timerInterval = null;
 async function init() {
   showMsg("同步全產線物料關係...", "#64748b");
   try {
-    await updateFullState();
-    showMsg("就緒", "#10b981");
+    await updateFlowInfo();
+    await fetchWipData();
+    showMsg("就緒，隨時可開始作業", "#10b981");
 
-    // 每 2 秒同步一次後台（保持最新）
-    setInterval(updateFullState, 2000);
+    // 每 2 秒同步一次後台庫存
+    setInterval(autoSyncLive, 2000);
   } catch (err) {
     showMsg("初始化失敗：" + err.message, "#ef4444");
   }
 }
 
-// 🌟 齊套計算與雙向同步核心
-async function updateFullState() {
-  try {
-    const [flowRes, eventRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`, {
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      }),
-      fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&status=eq.COMPLETED&select=station_id`, {
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      })
-    ]);
+// 判斷工站屬性 (起點站 vs 後續站)
+async function updateFlowInfo() {
+  const flowRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`,
+    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+  );
+  const flowData = await flowRes.json();
 
-    const flowData = await flowRes.json();
-    const eventData = await eventRes.json();
+  // 找前置來源站
+  feederStations = flowData
+    .filter(f => (f.next_station_id || "").trim() === stationId)
+    .map(f => f.station_id.trim());
 
-    // 統計資料庫中各站的完成數
-    const completedMap = {};
-    eventData.forEach(e => {
-      const st = (e.station_id || "").trim();
-      completedMap[st] = (completedMap[st] || 0) + 1;
-    });
+  // 找下一站
+  const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
+  nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
 
-    const dbDone = completedMap[stationId] || 0;
-    
-    // 🌟 核心防呆：若後台被清空（event 筆數為 0 且 local > 0），才重置
-    if (eventData.length === 0 && localCompletedCount > 0 && !isWorking) {
-      localCompletedCount = 0;
-      document.getElementById("productIdInput").value = "P01";
-      document.getElementById("historyList").innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">後台已重置，準備新一輪競賽</div>`;
-    } else {
-      // 保持本地與資料庫兩者的最大值，絕不倒退回 0！
-      localCompletedCount = Math.max(localCompletedCount, dbDone);
-    }
-
-    document.getElementById("wipOutText").textContent = localCompletedCount;
-    document.getElementById("cycleTotalBadge").textContent = `累計完成：${localCompletedCount} 件`;
-
-    // 找出所有前置來源站
-    feederStations = flowData
-      .filter(f => (f.next_station_id || "").trim() === stationId)
-      .map(f => f.station_id.trim());
-
-    // 找出下一站
-    const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
-    nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
-
-    // 1. 起點工站（無前置工作站）
-    if (feederStations.length === 0) {
-      isRootStation = true;
-      document.getElementById("stationTypeNotice").textContent = "🟢 起點工站：原料直接取用，無前置限制";
-      document.getElementById("inSubtitle").textContent = "自由投入";
-      document.getElementById("wipInText").textContent = "∞";
-      document.getElementById("kittingBox").style.display = "none";
-
-      if (!isWorking) {
-        enableStartButton(`▶ 開始第 ${localCompletedCount + 1} 次作業`);
-      }
-      return;
-    }
-
-    // 2. 非起點工站與匯流總裝工站 (檢查各前置站各 1 件)
+  if (feederStations.length === 0) {
+    isRootStation = true;
+    document.getElementById("stationTypeNotice").textContent = "🟢 起點工站：原料直接取用，無前置限制";
+  } else {
     isRootStation = false;
     document.getElementById("stationTypeNotice").textContent = 
-      `⚡ 物料依賴工站：需來自 [${feederStations.join(" + ")}] 各 1 個半成品`;
-    document.getElementById("kittingBox").style.display = "block";
+      `⚡ 物料依賴工站：前置來源為 [${feederStations.join(" + ")}]`;
+  }
+}
 
-    let kittingHtml = "";
-    let minStock = 999999;
-
-    feederStations.forEach(fSt => {
-      const fTotal = completedMap[fSt] || 0;
-      const stock = Math.max(0, fTotal - localCompletedCount);
-      if (stock < minStock) minStock = stock;
-
-      const isShortage = stock === 0;
-      kittingHtml += `
-        <div class="kitting-item">
-          <span>來源 <b>${fSt}</b>：</span>
-          <span style="color:${isShortage ? '#dc2626' : '#16a34a'}; font-weight:bold;">
-            ${stock} 件 ${isShortage ? '❌ (缺件)' : '✓'}
-          </span>
-        </div>
-      `;
+// 讀取/建立 WIP 庫存
+async function fetchWipData() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
+    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+  );
+  const data = await res.json();
+  if (data.length > 0) {
+    wipRecordId = data[0].id;
+    currentInWip = data[0].input_wip || 0;
+    currentOutWip = data[0].output_wip || 0;
+  } else {
+    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json", Prefer: "return=representation"
+      },
+      body: JSON.stringify({ group_id: groupId, station_id: stationId, input_wip: 0, output_wip: 0 })
     });
+    const created = await insertRes.json();
+    wipRecordId = created[0].id;
+    currentInWip = 0;
+    currentOutWip = 0;
+  }
 
-    document.getElementById("kittingListContainer").innerHTML = kittingHtml;
-    kitAvailableCount = minStock === 999999 ? 0 : minStock;
-    document.getElementById("wipInText").textContent = kitAvailableCount;
-    document.getElementById("inSubtitle").textContent = `齊套可做數`;
+  refreshUiNumbers();
+}
 
-    // 斷料禁止計時
-    if (!isWorking) {
-      if (kitAvailableCount <= 0) {
-        disableStartButton("⛔ 站前缺料歸零（禁止計時）");
-        showMsg("⚠️ 零件尚未齊全，請等待前站送達！", "#dc2626");
-      } else {
-        enableStartButton(`▶ 開始第 ${localCompletedCount + 1} 次作業 (庫存:${kitAvailableCount})`);
-        showMsg("零件齊套，可開始作業", "#10b981");
-      }
-    }
-  } catch (err) {
-    console.error("同步失敗", err);
+// 刷新數字與按鈕狀態 (斷料防呆)
+function refreshUiNumbers() {
+  document.getElementById("wipInText").textContent = currentInWip;
+  document.getElementById("wipOutText").textContent = currentOutWip;
+  document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
+
+  if (isWorking) return;
+
+  // 🌟 防呆規則：
+  // 1. 起點站：無限制，維持原樣
+  // 2. 後續工站：若站前庫存歸零 (currentInWip <= 0)，嚴格禁止計時！
+  if (!isRootStation && currentInWip <= 0) {
+    disableStartButton("⛔ 站前缺料歸零（禁止計時）");
+    showMsg("⚠️ 站前庫存歸零，等待送料或請點擊 [+] 設定初始備料", "#dc2626");
+  } else {
+    enableStartButton(`▶ 開始第 ${currentOutWip + 1} 次作業`);
+    showMsg("料件就緒，可開始作業", "#10b981");
   }
 }
 
@@ -344,17 +333,84 @@ function disableStartButton(text) {
   btn.className = "main-btn btn-disabled";
 }
 
-// 主操作按鈕：開始 / 完成 (一次性可靠寫入)
+// 手動調整 WIP (設定初始備料或補料)
+async function updateWipDb(newIn, newOut) {
+  if (newIn < 0) newIn = 0;
+  if (newOut < 0) newOut = 0;
+  currentInWip = newIn;
+  currentOutWip = newOut;
+  refreshUiNumbers();
+
+  await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      input_wip: currentInWip,
+      output_wip: currentOutWip,
+      updated_at: new Date().toISOString()
+    })
+  });
+}
+
+document.getElementById("btnPlusIn").onclick = () => updateWipDb(currentInWip + 1, currentOutWip);
+document.getElementById("btnMinusIn").onclick = () => updateWipDb(currentInWip - 1, currentOutWip);
+document.getElementById("btnPlusOut").onclick = () => updateWipDb(currentInWip, currentOutWip + 1);
+document.getElementById("btnMinusOut").onclick = () => updateWipDb(currentInWip, currentOutWip - 1);
+
+// 背景雙向同步
+async function autoSyncLive() {
+  if (!wipRecordId) return;
+
+  try {
+    // 1. 同步資料庫最新 WIP
+    const wipRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}&select=input_wip,output_wip`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const wipData = await wipRes.json();
+    if (wipData.length > 0) {
+      currentInWip = wipData[0].input_wip || 0;
+      currentOutWip = wipData[0].output_wip || 0;
+      refreshUiNumbers();
+    }
+
+    // 2. 檢查大螢幕是否按下了清空歸零
+    if (!isWorking && currentOutWip > 0) {
+      const eventRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&station_id=eq.${stationId}&select=id`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const evList = await eventRes.json();
+      if (evList.length === 0) {
+        currentOutWip = 0;
+        document.getElementById("productIdInput").value = "P01";
+        document.getElementById("historyList").innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">後台已重置，準備新一輪競賽</div>`;
+        refreshUiNumbers();
+        showMsg("✓ 後台已重置，可設定初始備料重新開跑！", "#10b981");
+      }
+    }
+  } catch(e) {}
+}
+
+// 主操作按鈕：開始 (扣除站前料) / 完成 (累計站後 + 推送下一站)
 const mainBtn = document.getElementById("mainActionBtn");
 mainBtn.addEventListener("click", async function() {
   if (!isWorking) {
     // --- 開始作業 ---
-    if (!isRootStation && kitAvailableCount <= 0) {
-      alert("❌ 站前庫存已歸零，嚴格禁止開始計時！");
+    if (!isRootStation && currentInWip <= 0) {
+      alert("❌ 站前庫存已歸零，嚴格禁止開始計時！請等待送料或設定初始備料。");
       return;
     }
 
-    const prodId = document.getElementById("productIdInput").value.trim() || `P${localCompletedCount + 1}`;
+    // 站前扣除 1 件
+    if (currentInWip > 0) {
+      await updateWipDb(currentInWip - 1, currentOutWip);
+    }
+
+    const prodId = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
     startTime = new Date();
     isWorking = true;
 
@@ -366,15 +422,23 @@ mainBtn.addEventListener("click", async function() {
   } else {
     // --- 完成作業 ---
     mainBtn.disabled = true;
-    showMsg("儲存完工紀錄...", "#64748b");
+    showMsg("完工紀錄中...", "#64748b");
     clearInterval(timerInterval);
 
     const finishTime = new Date();
     const durationSec = Math.round((finishTime - startTime) / 1000);
-    const finishedProduct = document.getElementById("productIdInput").value.trim() || `P${localCompletedCount + 1}`;
+    const finishedProduct = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
 
     try {
-      // 🌟 一次性直接寫入 COMPLETED，100% 成功，絕不遺失！
+      // 1. 本站完工數 + 1
+      await updateWipDb(currentInWip, currentOutWip + 1);
+
+      // 2. 自動將做完的半成品推送到下一站的站前庫存 (+1)
+      if (nextStationId) {
+        await pushWipToNextStation(nextStationId);
+      }
+
+      // 3. 一次性寫入 COMPLETED
       await fetch(`${SUPABASE_URL}/rest/v1/event`, {
         method: "POST",
         headers: {
@@ -389,35 +453,51 @@ mainBtn.addEventListener("click", async function() {
           finish_time: finishTime.toISOString(),
           duration_sec: durationSec,
           status: "COMPLETED",
-          wip_before_start: isRootStation ? 0 : kitAvailableCount,
-          wip_after_finish: localCompletedCount + 1
+          wip_before_start: currentInWip + 1,
+          wip_after_finish: currentOutWip
         })
       });
 
-      // 🌟 本地次數立刻 +1，堅固鎖定！
-      localCompletedCount++;
-      document.getElementById("wipOutText").textContent = localCompletedCount;
-      document.getElementById("cycleTotalBadge").textContent = `累計完成：${localCompletedCount} 件`;
-
-      addHistoryItem(localCompletedCount, finishedProduct, durationSec, kitAvailableCount);
+      addHistoryItem(currentOutWip, finishedProduct, durationSec, currentInWip + 1);
       autoIncrementProductInput();
 
-      showMsg(`✓ 第 ${localCompletedCount} 件完成！耗時 ${durationSec} 秒`, "#10b981");
+      showMsg(`✓ 第 ${currentOutWip} 件完成！耗時 ${durationSec} 秒`, "#10b981");
 
       isWorking = false;
       document.getElementById("timerDisplay").textContent = "00:00.0";
       
-      // 立即準備下一次
-      enableStartButton(`▶ 開始第 ${localCompletedCount + 1} 次作業`);
-
-      // 重新整理齊套計算
-      await updateFullState();
+      refreshUiNumbers();
     } catch (err) {
       mainBtn.disabled = false;
       showMsg("存檔失敗：" + err.message, "#ef4444");
     }
   }
 });
+
+// 自動向下一站送料 (+1)
+async function pushWipToNextStation(nextSt) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${nextSt}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const data = await res.json();
+    if (data.length > 0) {
+      const targetId = data[0].id;
+      const targetInputWip = (data[0].input_wip || 0) + 1;
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${targetId}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input_wip: targetInputWip, updated_at: new Date().toISOString() })
+      });
+    }
+  } catch(e) {
+    console.error("推送失敗", e);
+  }
+}
 
 function autoIncrementProductInput() {
   const input = document.getElementById("productIdInput");
@@ -429,7 +509,7 @@ function autoIncrementProductInput() {
     const pad = match[2].length;
     input.value = prefix + String(num).padStart(pad, '0');
   } else {
-    input.value = `P${localCompletedCount + 1}`;
+    input.value = `P${currentOutWip + 1}`;
   }
 }
 

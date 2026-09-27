@@ -106,8 +106,8 @@
     }
     .btn-start { background: #10b981; }
     .btn-start:active { background: #059669; }
-    .btn-finish { background: #ef4444; }
-    .btn-finish:active { background: #dc2626; }
+    .btn-finish { background: #ef4444 !important; cursor: pointer !important; opacity: 1 !important; }
+    .btn-finish:active { background: #dc2626 !important; }
     
     .btn-disabled {
       background: #94a3b8 !important;
@@ -185,7 +185,7 @@
     <div class="init-hint">💡 開工前請清點桌上半成品，可點擊上方 [ + ] [ - ] 設定初始備料</div>
   </div>
 
-  <!-- 計時主控區 (支援斷料禁止計時) -->
+  <!-- 計時主控區 -->
   <div class="card">
     <div class="timer-display" id="timerDisplay">00:00.0</div>
     <button class="main-btn btn-start" id="mainActionBtn">▶ 開始第 1 次作業</button>
@@ -216,11 +216,11 @@ document.getElementById("groupBadge").textContent = groupId;
 document.getElementById("stationBadge").textContent = stationId;
 document.getElementById("productIdInput").value = defaultProduct;
 
-let isRootStation = false;     // 是否為起點工站 (無前置站)
+let isRootStation = false;     // 是否為起點工站
 let feederStations = [];       // 前置工站清單
 let nextStationId = null;      // 下一站代號
 
-let currentInWip = 0;          // 站前可用庫存 (初始備料 + 接收 - 消耗)
+let currentInWip = 0;          // 站前可用庫存
 let currentOutWip = 0;         // 站後完工數
 let wipRecordId = null;
 
@@ -236,14 +236,12 @@ async function init() {
     await fetchWipData();
     showMsg("就緒，隨時可開始作業", "#10b981");
 
-    // 每 2 秒同步一次後台庫存
     setInterval(autoSyncLive, 2000);
   } catch (err) {
     showMsg("初始化失敗：" + err.message, "#ef4444");
   }
 }
 
-// 判斷工站屬性 (起點站 vs 後續站)
 async function updateFlowInfo() {
   const flowRes = await fetch(
     `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`,
@@ -251,12 +249,10 @@ async function updateFlowInfo() {
   );
   const flowData = await flowRes.json();
 
-  // 找前置來源站
   feederStations = flowData
     .filter(f => (f.next_station_id || "").trim() === stationId)
     .map(f => f.station_id.trim());
 
-  // 找下一站
   const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
   nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
 
@@ -270,7 +266,6 @@ async function updateFlowInfo() {
   }
 }
 
-// 讀取/建立 WIP 庫存
 async function fetchWipData() {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
@@ -299,17 +294,21 @@ async function fetchWipData() {
   refreshUiNumbers();
 }
 
-// 刷新數字與按鈕狀態 (斷料防呆)
+// 刷新數字與按鈕狀態
 function refreshUiNumbers() {
   document.getElementById("wipInText").textContent = currentInWip;
   document.getElementById("wipOutText").textContent = currentOutWip;
   document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
 
-  if (isWorking) return;
+  // 🌟 重要修復：如果正在作業計時中，按鈕永遠是亮紅燈且「絕對可點擊」！
+  if (isWorking) {
+    const btn = document.getElementById("mainActionBtn");
+    btn.disabled = false;
+    btn.className = "main-btn btn-finish";
+    return;
+  }
 
-  // 🌟 防呆規則：
-  // 1. 起點站：無限制，維持原樣
-  // 2. 後續工站：若站前庫存歸零 (currentInWip <= 0)，嚴格禁止計時！
+  // 只有在非計時狀態下，才檢查是否斷料鎖定
   if (!isRootStation && currentInWip <= 0) {
     disableStartButton("⛔ 站前缺料歸零（禁止計時）");
     showMsg("⚠️ 站前庫存歸零，等待送料或請點擊 [+] 設定初始備料", "#dc2626");
@@ -333,7 +332,7 @@ function disableStartButton(text) {
   btn.className = "main-btn btn-disabled";
 }
 
-// 手動調整 WIP (設定初始備料或補料)
+// 手動調整 WIP
 async function updateWipDb(newIn, newOut) {
   if (newIn < 0) newIn = 0;
   if (newOut < 0) newOut = 0;
@@ -365,7 +364,6 @@ async function autoSyncLive() {
   if (!wipRecordId) return;
 
   try {
-    // 1. 同步資料庫最新 WIP
     const wipRes = await fetch(
       `${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}&select=input_wip,output_wip`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
@@ -377,7 +375,6 @@ async function autoSyncLive() {
       refreshUiNumbers();
     }
 
-    // 2. 檢查大螢幕是否按下了清空歸零
     if (!isWorking && currentOutWip > 0) {
       const eventRes = await fetch(
         `${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&station_id=eq.${stationId}&select=id`,
@@ -405,6 +402,9 @@ mainBtn.addEventListener("click", async function() {
       return;
     }
 
+    // 🌟 先將作業狀態設為 true，保護按鈕不被鎖定
+    isWorking = true;
+
     // 站前扣除 1 件
     if (currentInWip > 0) {
       await updateWipDb(currentInWip - 1, currentOutWip);
@@ -412,8 +412,9 @@ mainBtn.addEventListener("click", async function() {
 
     const prodId = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
     startTime = new Date();
-    isWorking = true;
 
+    // 🌟 確保按鈕永遠可點擊，不會被 disabled
+    mainBtn.disabled = false;
     mainBtn.textContent = `■ 完成此件作業 (${prodId})`;
     mainBtn.className = "main-btn btn-finish";
     showMsg("計時進行中...", "#10b981");

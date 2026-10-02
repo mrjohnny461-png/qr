@@ -175,14 +175,15 @@
         <a href="qrcode.html" class="switch-link">更換 ❯</a>
       </div>
     </div>
+    <!-- 🏷️ 生產料號 -->
+    <div style="margin-top:10px; padding:10px 14px; background:#eff6ff; border-radius:10px; border:1px solid #bfdbfe; display:flex; align-items:center; justify-content:space-between;">
+      <span style="font-size:14px; font-weight:bold; color:#1e40af;">🏷️ 生產料號 (Part No.)：</span>
+      <span id="partNoDisplay" style="font-size:16px; font-weight:800; color:#1d4ed8;">載入中...</span>
+    </div>
     <!-- 前後工站流向清楚標籤 -->
     <div class="flow-info-box" style="margin-top:8px; padding:10px 12px; background:#f8fafc; border-radius:10px; border:1px solid #e2e8f0; font-size:13px; line-height:1.6;">
       <div><span style="font-weight:bold; color:#475569;">📥 前置來源站：</span><span id="feederStationListText" style="color:#2563eb; font-weight:bold;">確認中...</span></div>
       <div><span style="font-weight:bold; color:#475569;">📤 完工送往：</span><span id="nextStationText" style="color:#059669; font-weight:bold;">確認中...</span></div>
-    </div>
-    <div style="margin-top:8px;">
-      <label style="font-size:13px; color:#64748b;">當前產品序號：</label>
-      <input type="text" id="productIdInput" class="input-field" value="P01">
     </div>
   </div>
 
@@ -199,14 +200,12 @@
           <button class="wip-btn btn-in" id="btnPlusIn">+</button>
         </div>
       </div>
-      <!-- 站後已完成 -->
+      <!-- 站後已完成（真實計時產出，不可手動預設） -->
       <div class="wip-box wip-out">
         <div class="wip-title">📤 站後已完成</div>
-        <div class="wip-subtitle">累計完工件數</div>
-        <div class="wip-counter">
-          <button class="wip-btn btn-out" id="btnMinusOut">-</button>
-          <span class="wip-val" id="wipOutText">0</span>
-          <button class="wip-btn btn-out" id="btnPlusOut">+</button>
+        <div class="wip-subtitle">累計完工件數 (真實產出)</div>
+        <div class="wip-counter" style="justify-content:center; min-height:40px;">
+          <span class="wip-val" id="wipOutText" style="font-size:36px; color:#059669;">0</span>
         </div>
       </div>
     </div>
@@ -254,11 +253,32 @@ const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
 const urlParams = new URLSearchParams(window.location.search);
 const groupId = (urlParams.get("group") || "G01").trim();
 const stationId = (urlParams.get("station") || "ST01").trim();
-const defaultProduct = urlParams.get("product") || "P01";
+
+// 🏷️ 取得生產料號：優先從 URL 參數 (?part=) 取得，若無則自動自本機快存 (localStorage) 讀取
+let partNo = (urlParams.get("part") || "").trim();
+if (!partNo) {
+  try {
+    partNo = (localStorage.getItem("ie_chair_locked_part_no") || "").trim();
+  } catch (e) {}
+}
 
 document.getElementById("groupBadge").textContent = groupId;
 document.getElementById("stationBadge").textContent = stationId;
-document.getElementById("productIdInput").value = defaultProduct;
+
+const partDisplayEl = document.getElementById("partNoDisplay");
+if (partNo) {
+  partDisplayEl.textContent = partNo;
+  partDisplayEl.style.color = "#1d4ed8";
+  try { localStorage.setItem("ie_chair_locked_part_no", partNo); } catch(e) {}
+} else {
+  partDisplayEl.textContent = "未指定料號";
+  partDisplayEl.style.color = "#94a3b8";
+}
+
+// 自動以完工數產生序號 (如 P01, P02, P03...)，無需人工輸入
+function getCurProductCode() {
+  return `P${String(currentOutWip + 1).padStart(2, '0')}`;
+}
 
 let isRootStation = false;     // 是否為起點工站 (前無工作站)
 let feederStations = [];       // 前置工站清單 (如 ST02, ST04, ST06, ST07, ST08)
@@ -495,8 +515,6 @@ async function updateWipDb(newIn, newOut) {
 
 document.getElementById("btnPlusIn").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
 document.getElementById("btnMinusIn").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
-document.getElementById("btnPlusOut").onclick = () => updateWipDb(manualBufferWip, currentOutWip + 1);
-document.getElementById("btnMinusOut").onclick = () => updateWipDb(manualBufferWip, currentOutWip - 1);
 
 // 背景雙向即時同步 (每 2 秒輪詢前置站點 output_wip)
 async function autoSyncLive() {
@@ -523,7 +541,6 @@ async function autoSyncLive() {
       if (evList.length === 0) {
         currentOutWip = 0;
         manualBufferWip = 0;
-        document.getElementById("productIdInput").value = "P01";
         document.getElementById("historyList").innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">後台已重置，準備新一輪競賽</div>`;
         showMsg("✓ 後台已重置，可重新開跑！", "#10b981");
       }
@@ -546,11 +563,11 @@ mainBtn.addEventListener("click", async function() {
     isWorking = true;
     await computeKitting();
 
-    const prodId = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
+    const prodId = getCurProductCode();
     startTime = new Date();
 
     mainBtn.disabled = false;
-    mainBtn.textContent = `■ 完成此件作業 (${prodId})`;
+    mainBtn.textContent = `■ 完成第 ${currentOutWip + 1} 件作業 (${prodId})`;
     mainBtn.className = "main-btn btn-finish";
     showMsg("計時進行中...", "#10b981");
 
@@ -563,7 +580,7 @@ mainBtn.addEventListener("click", async function() {
 
     const finishTime = new Date();
     const durationSec = Math.round((finishTime - startTime) / 1000);
-    const finishedProduct = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
+    const finishedProduct = getCurProductCode();
 
     try {
       // 1. 本站完工數 + 1 (等同於自動扣減各前置工站部件 1 個)
@@ -590,7 +607,6 @@ mainBtn.addEventListener("click", async function() {
       });
 
       addHistoryItem(currentOutWip, finishedProduct, durationSec, kitCount);
-      autoIncrementProductInput();
 
       showMsg(`✓ 第 ${currentOutWip} 件完成！耗時 ${durationSec} 秒`, "#10b981");
 
@@ -604,20 +620,6 @@ mainBtn.addEventListener("click", async function() {
     }
   }
 });
-
-function autoIncrementProductInput() {
-  const input = document.getElementById("productIdInput");
-  const val = input.value.trim();
-  const match = val.match(/^([A-Za-z]+)(\d+)$/);
-  if (match) {
-    const prefix = match[1];
-    const num = parseInt(match[2], 10) + 1;
-    const pad = match[2].length;
-    input.value = prefix + String(num).padStart(pad, '0');
-  } else {
-    input.value = `P${currentOutWip + 1}`;
-  }
-}
 
 function addHistoryItem(count, prod, sec, wip) {
   const list = document.getElementById("historyList");

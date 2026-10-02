@@ -175,7 +175,11 @@
         <a href="qrcode.html" class="switch-link">更換 ❯</a>
       </div>
     </div>
-    <div class="flow-badge" id="stationTypeNotice">工站屬性確認中...</div>
+    <!-- 前後工站流向清楚標籤 -->
+    <div class="flow-info-box" style="margin-top:8px; padding:10px 12px; background:#f8fafc; border-radius:10px; border:1px solid #e2e8f0; font-size:13px; line-height:1.6;">
+      <div><span style="font-weight:bold; color:#475569;">📥 前置來源站：</span><span id="feederStationListText" style="color:#2563eb; font-weight:bold;">確認中...</span></div>
+      <div><span style="font-weight:bold; color:#475569;">📤 完工送往：</span><span id="nextStationText" style="color:#059669; font-weight:bold;">確認中...</span></div>
+    </div>
     <div style="margin-top:8px;">
       <label style="font-size:13px; color:#64748b;">當前產品序號：</label>
       <input type="text" id="productIdInput" class="input-field" value="P01">
@@ -207,7 +211,7 @@
       </div>
     </div>
 
-    <!-- 匯流工站齊套狀態卡 (呈現各零件狀態) -->
+    <!-- 匯流工站齊套狀態卡 (若有前置站點則呈現各零件狀態) -->
     <div id="feederStatusCard" class="feeder-card" style="display:none;">
       <div class="feeder-title">
         <span>🧩 前置零件庫存狀態（各需 1 件）：</span>
@@ -301,17 +305,29 @@ async function updateFlowInfo() {
   const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
   nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
 
+  const feederTextEl = document.getElementById("feederStationListText");
+  const nextTextEl = document.getElementById("nextStationText");
+
   if (feederStations.length === 0) {
     isRootStation = true;
-    document.getElementById("stationTypeNotice").textContent = "🟢 起點工站：原料直接取用，無前置工站限制";
+    feederTextEl.textContent = "🟢 起點第一站（無前置工站，原料自由取用）";
+    feederTextEl.style.color = "#16a34a";
     document.getElementById("feederStatusCard").style.display = "none";
     document.getElementById("inSubtitle").textContent = "現場零件庫存";
   } else {
     isRootStation = false;
-    document.getElementById("stationTypeNotice").textContent = 
-      `⚡ 匯流/組裝工站：前置料件來源為 [${feederStations.join(" + ")}]`;
+    feederTextEl.textContent = `${feederStations.join(" + ")} (共 ${feederStations.length} 站)`;
+    feederTextEl.style.color = "#2563eb";
     document.getElementById("feederStatusCard").style.display = "block";
     document.getElementById("inSubtitle").textContent = "可齊套組裝數";
+  }
+
+  if (nextStationId) {
+    nextTextEl.textContent = `➡️ ${nextStationId}`;
+    nextTextEl.style.color = "#059669";
+  } else {
+    nextTextEl.textContent = "🏁 產線終點（組裝完成）";
+    nextTextEl.style.color = "#7c3aed";
   }
 }
 
@@ -421,21 +437,22 @@ function refreshUiNumbers() {
     return;
   }
 
-  // 🌟 非計時中：檢查物料齊全度
-  const effectiveStock = isRootStation ? manualBufferWip : kitCount;
+  // 🌟 非計時中：
+  // 1. 若為起點工站 (前無工作站，如 ST01, ST03, ST06, ST07, ST08)：不受原物料限制，自由計時！
+  if (isRootStation) {
+    enableStartButton(`▶ 開始第 ${currentOutWip + 1} 次作業`);
+    showMsg("🟢 第一站（原料直接投放）：不受庫存限制，隨時可開始作業！", "#10b981");
+    return;
+  }
 
-  if (effectiveStock <= 0) {
-    if (isRootStation) {
-      disableStartButton("⛔ 原料已用罄（禁止計時）");
-      showMsg("⚠️ 站前原料歸零，請點擊 [+] 領取原料後開始！", "#dc2626");
-    } else {
-      const missing = feederDetails.filter(d => !d.ok).map(d => d.station);
-      disableStartButton("⛔ 站前缺料（可組裝 0 套）");
-      showMsg(`⚠️ 缺料工站：[${missing.join(", ")}] 庫存不足，請等待前置工站完工送達或按 [+] 補料！`, "#dc2626");
-    }
+  // 2. 若為下游工站 (前面有工站，如 ST02, ST04, ST05)：嚴格受前置齊套庫存限制！
+  if (kitCount <= 0) {
+    const missing = feederDetails.filter(d => !d.ok).map(d => d.station);
+    disableStartButton("⛔ 站前缺料（可組裝 0 套）");
+    showMsg(`⚠️ 缺料工站：[${missing.join(", ")}] 庫存不足，請等待前置工站完工送達或按 [+] 補料！`, "#dc2626");
   } else {
     enableStartButton(`▶ 開始第 ${currentOutWip + 1} 次作業`);
-    showMsg(`✓ 物料齊全（可齊套 ${effectiveStock} 組），隨時可開始作業`, "#10b981");
+    showMsg(`✓ 物料齊全（可齊套 ${kitCount} 組），隨時可開始作業`, "#10b981");
   }
 }
 
@@ -521,21 +538,13 @@ const mainBtn = document.getElementById("mainActionBtn");
 mainBtn.addEventListener("click", async function() {
   if (!isWorking) {
     // --- 開始作業 ---
-    const stock = isRootStation ? manualBufferWip : kitCount;
-    if (stock <= 0) {
+    if (!isRootStation && kitCount <= 0) {
       alert("❌ 站前缺料或物料未齊套，禁止開始計時！請等待前站送料或手動補入備料。");
       return;
     }
 
     isWorking = true;
-
-    // 若為起點站，扣除原料
-    if (isRootStation && manualBufferWip > 0) {
-      await updateWipDb(manualBufferWip - 1, currentOutWip);
-    } else {
-      // 匯流站直接在計算中納入 isWorking
-      await computeKitting();
-    }
+    await computeKitting();
 
     const prodId = document.getElementById("productIdInput").value.trim() || `P${currentOutWip + 1}`;
     startTime = new Date();

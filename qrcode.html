@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IE Chair - 工站 QR Code 產生器</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 800px; margin: 30px auto; padding: 20px;
+      background: #f8fafc; color: #1e293b;
+    }
+    .card {
+      background: #fff; border-radius: 12px; padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07);
+      border: 1px solid #e2e8f0; margin-bottom: 20px;
+    }
+    h1 { margin-top: 0; font-size: 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+    select, input {
+      width: 100%; padding: 10px 12px; font-size: 15px;
+      border: 1px solid #cbd5e1; border-radius: 8px;
+    }
+    /* 永久鎖定的網址框樣式 */
+    input.readonly-input {
+      background-color: #f1f5f9;
+      color: #64748b;
+      cursor: not-allowed;
+      border: 1px solid #cbd5e1;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    button, a.btn-link {
+      padding: 12px 20px; font-size: 15px; font-weight: 600;
+      border-radius: 8px; border: none; cursor: pointer; text-decoration: none;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #0284c7; color: #fff; }
+    .btn-secondary:hover { background: #0369a1; }
+    .btn-success { background: #10b981; color: #fff; }
+    .btn-outline { background: #fff; border: 1px solid #cbd5e1; color: #475569; }
+
+    #singleResult {
+      margin-top: 24px; padding: 20px; background: #f1f5f9;
+      border-radius: 12px; text-align: center; display: none;
+    }
+    #qrcode {
+      display: inline-block; padding: 16px; background: #fff;
+      border-radius: 12px; margin: 15px 0;
+    }
+    #urlBox {
+      background: #fff; padding: 10px; border-radius: 6px;
+      border: 1px solid #e2e8f0; font-family: monospace; font-size: 13px;
+      color: #64748b; margin: 10px auto; word-break: break-all; max-width: 90%;
+    }
+
+    #batchPrintArea { display: none; margin-top: 30px; }
+    .station-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px; margin-top: 15px;
+    }
+    .station-card {
+      border: 2px dashed #94a3b8; border-radius: 10px;
+      padding: 15px; text-align: center; background: #fff;
+      page-break-inside: avoid;
+    }
+    .station-card h3 { margin: 0 0 10px 0; font-size: 20px; }
+    .station-card .mini-qr { display: flex; justify-content: center; margin: 5px 0; }
+
+    @media print {
+      body { background: #fff; margin: 0; padding: 0; }
+      .card, h1, .btn-group, #singleResult { display: none !important; }
+      #batchPrintArea { display: block !important; }
+      .station-card { border: 1px solid #000; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>📱 IE Chair 工站 QR Code 產生器</h1>
+
+    <!-- 永久固定且鎖定的網址 -->
+    <div class="form-group">
+      <label>計時頁面網址 (Base URL，已永久固定)：</label>
+      <input type="text" id="baseUrl" class="readonly-input"
+             value="https://mrjohnny461-png.github.io/qr/timer.html"
+             readonly disabled>
+      <span style="font-size:12px; color:#64748b;">🔒 此網址已永久鎖定，所有產生的 QR Code 皆會導向此處。</span>
+    </div>
+
+    <!-- 選擇組別與工站 -->
+    <div class="grid-2">
+      <div class="form-group">
+        <label>組別 (Group)：</label>
+        <select id="groupSelect">
+          <option value="G01">G01</option>
+          <option value="G02" selected>G02</option>
+          <option value="G03">G03</option>
+          <option value="G04">G04</option>
+          <option value="G05">G05</option>
+          <option value="G06">G06</option>
+          <option value="G07">G07</option>
+          <option value="G08">G08</option>
+          <option value="G09">G09</option>
+          <option value="G10">G10</option>
+          <option value="G11">G11</option>
+          <option value="G12">G12</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>工站 (Station)：</label>
+        <select id="stationSelect">
+          <option value="ST01">ST01</option>
+          <option value="ST02">ST02</option>
+          <option value="ST03">ST03</option>
+          <option value="ST04">ST04</option>
+          <option value="ST05">ST05</option>
+          <option value="ST06">ST06</option>
+          <option value="ST07">ST07</option>
+          <option value="ST08">ST08</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 🏷️ 8 個工站個別生產料號設定 (各組、各站獨立) -->
+    <div class="form-group" style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #cbd5e1; margin-top:15px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <div>
+          <label style="margin:0; font-weight:bold; font-size:15px; color:#0f172a;">
+            🏷️ <span id="currentGroupLabel" style="color:#2563eb;">G02</span> 各工站生產料號設定 (各組獨立儲存)：
+          </label>
+          <span style="font-size:12px; color:#64748b;">
+            每個組別（G01~G12）與每個工站皆可獨立設定不同料號，切換上方組別時自動切換顯示。
+          </span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <button id="copyToAllGroupsBtn" type="button" style="padding:6px 12px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer;" title="將目前這組的料號快速複製給其他組別">
+            📋 複製此組料號到所有組別
+          </button>
+          <span id="lockStatusBadge" style="font-size:12px; font-weight:bold; color:#64748b;">🔓 未鎖定</span>
+          <button id="lockPartBtn" type="button" style="padding:6px 14px; font-size:13px; border-radius:6px; border:none; background:#2563eb; color:#fff; cursor:pointer; font-weight:bold;">
+            🔒 鎖定此組料號
+          </button>
+        </div>
+      </div>
+
+      <!-- 8 工站個別輸入欄網格 (支援半成品完工料號 + 現場原生零件設定) -->
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;" id="stationPartsGrid">
+        <!-- ST01 -->
+        <div class="station-part-card" id="partCard_ST01" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST01:</span>
+            <input type="text" class="station-part-input" data-station="ST01" placeholder="完工料號 (例如：asm-001)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST01" id="rawCheck_ST01" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST01" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST01" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST01" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST01" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST02 -->
+        <div class="station-part-card" id="partCard_ST02" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST02:</span>
+            <input type="text" class="station-part-input" data-station="ST02" placeholder="完工料號 (例如：asm-002)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST02" id="rawCheck_ST02" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST02" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST02" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST02" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST02" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST03 -->
+        <div class="station-part-card" id="partCard_ST03" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST03:</span>
+            <input type="text" class="station-part-input" data-station="ST03" placeholder="完工料號 (例如：asm-003)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST03" id="rawCheck_ST03" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST03" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST03" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST03" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST03" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST04 -->
+        <div class="station-part-card" id="partCard_ST04" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST04:</span>
+            <input type="text" class="station-part-input" data-station="ST04" placeholder="完工料號 (例如：asm-004)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST04" id="rawCheck_ST04" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST04" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST04" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST04" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST04" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST05 -->
+        <div class="station-part-card" id="partCard_ST05" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST05:</span>
+            <input type="text" class="station-part-input" data-station="ST05" placeholder="完工料號 (例如：asm-005)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST05" id="rawCheck_ST05" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST05" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST05" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST05" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST05" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST06 -->
+        <div class="station-part-card" id="partCard_ST06" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST06:</span>
+            <input type="text" class="station-part-input" data-station="ST06" placeholder="完工料號 (例如：asm-006)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST06" id="rawCheck_ST06" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST06" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST06" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST06" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST06" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST07 -->
+        <div class="station-part-card" id="partCard_ST07" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST07:</span>
+            <input type="text" class="station-part-input" data-station="ST07" placeholder="完工料號 (例如：asm-007)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST07" id="rawCheck_ST07" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST07" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST07" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST07" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST07" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+
+        <!-- ST08 -->
+        <div class="station-part-card" id="partCard_ST08" style="display:flex; flex-direction:column; gap:6px; background:#fff; padding:10px 12px; border-radius:10px; border:1px solid #cbd5e1;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#1e40af; min-width:48px; font-size:15px;">ST08:</span>
+            <input type="text" class="station-part-input" data-station="ST08" placeholder="完工料號 (例如：asm-008)" style="padding:6px 8px; font-size:14px; flex:1;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; padding-top:4px; border-top:1px dashed #e2e8f0;">
+            <input type="checkbox" class="station-raw-check" data-station="ST08" id="rawCheck_ST08" style="width:auto; margin:0; cursor:pointer;">
+            <label for="rawCheck_ST08" style="margin:0; cursor:pointer; font-weight:600; font-size:12px; color:#334155;">📦 包含現場原生零件 (例如零件 5)</label>
+          </div>
+          <div class="raw-config-box" id="rawBox_ST08" style="display:none; gap:6px; align-items:center; background:#fef3c7; padding:6px 8px; border-radius:6px; border:1px solid #fde68a;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
+            <input type="text" class="station-raw-name" data-station="ST08" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
+            <input type="number" class="station-raw-init" data-station="ST08" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
+            <span style="font-size:11px; color:#92400e;">顆</span>
+          </div>
+        </div>
+      </div>
+      <div id="lockHintText" style="font-size:12px; color:#64748b; margin-top:10px;">
+        💡 提示：輸入各工站料號與原生零件設定後點擊「鎖定」，系統將永久儲存於瀏覽器，各站 QR Code 與桌牌將獨立帶入各自的設定。
+      </div>
+    </div>
+
+    <!-- 按鈕控制區 -->
+    <div class="btn-group">
+      <button class="btn-primary" id="genSingleBtn">🎯 產生此工站 QR Code</button>
+      <button class="btn-secondary" id="genAllBtn">🖨️ 產生本組全部 8 個工站 (列印桌牌)</button>
+    </div>
+
+    <!-- 單張 QR Code 展示區 -->
+    <div id="singleResult">
+      <h3 id="qrTitle" style="margin:0; font-size:22px;"></h3>
+      <div id="qrcode"></div>
+      <div id="urlBox"></div>
+      
+      <!-- 快速連結進入計時頁 -->
+      <div class="btn-group" style="justify-content:center; margin-top:10px; gap:8px;">
+        <a id="directLinkBtn" class="btn-link btn-success" target="_blank">
+          🚀 進入此工站計時
+        </a>
+        <button class="btn-outline" id="downloadImgBtn">💾 下載 QR 圖片</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 本組全部工站批次列印區 -->
+  <div id="batchPrintArea">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h2 id="batchTitle" style="margin:0;">本組全工站 QR Code 桌牌</h2>
+      <button class="btn-primary no-print" onclick="window.print()">🖨️ 列印此頁 (Ctrl + P)</button>
+    </div>
+    <div class="station-grid" id="stationGrid"></div>
+  </div>
+
+<script>
+  // 永久固定網址常數
+  const FIXED_BASE_URL = "https://mrjohnny461-png.github.io/qr/timer.html";
+  let currentFullUrl = "";
+
+  const STATIONS = ["ST01", "ST02", "ST03", "ST04", "ST05", "ST06", "ST07", "ST08"];
+  const GROUPS = ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12"];
+
+  const groupSelect = document.getElementById("groupSelect");
+  const stationSelect = document.getElementById("stationSelect");
+  const currentGroupLabel = document.getElementById("currentGroupLabel");
+  const lockBtn = document.getElementById("lockPartBtn");
+  const lockBadge = document.getElementById("lockStatusBadge");
+  const lockHint = document.getElementById("lockHintText");
+
+  let activeGroup = groupSelect.value || "G02";
+
+  // 讀取所有組別的各工站料號 { "G01": { "ST01": "..." }, "G02": { ... } }
+  function getAllGroupStationParts() {
+    try {
+      const raw = localStorage.getItem("ie_chair_group_station_parts");
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+
+    const legacyFlat = JSON.parse(localStorage.getItem("ie_chair_station_parts") || "{}");
+    const data = {};
+    GROUPS.forEach(g => {
+      data[g] = { ...legacyFlat };
+    });
+    return data;
+  }
+
+  function saveAllGroupStationParts(data) {
+    localStorage.setItem("ie_chair_group_station_parts", JSON.stringify(data));
+  }
+
+  // 讀取所有組別各工站的原生零件設定 { "G01": { "ST04": { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 } } }
+  function getAllGroupRawConfigs() {
+    try {
+      const raw = localStorage.getItem("ie_chair_group_station_raw");
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    const data = {};
+    GROUPS.forEach(g => {
+      data[g] = {
+        // 預設 ST04 為包含零件 5，其他為純半成品
+        "ST04": { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 }
+      };
+    });
+    return data;
+  }
+
+  function saveAllGroupRawConfigs(data) {
+    localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(data));
+  }
+
+  // 取得組別鎖定狀態字典 { "G01": true, "G02": false, ... }
+  function getGroupLocks() {
+    try {
+      const raw = localStorage.getItem("ie_chair_group_locks");
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    const locks = {};
+    GROUPS.forEach(g => { locks[g] = false; });
+    return locks;
+  }
+
+  function saveGroupLocks(locks) {
+    localStorage.setItem("ie_chair_group_locks", JSON.stringify(locks));
+  }
+
+  // 綁定各工站原生零件勾選框事件
+  STATIONS.forEach(st => {
+    const check = document.getElementById(`rawCheck_${st}`);
+    if (check) {
+      check.addEventListener("change", () => {
+        const box = document.getElementById(`rawBox_${st}`);
+        if (box) box.style.display = check.checked ? "flex" : "none";
+      });
+    }
+  });
+
+  // 渲染當前選取組別的 8 站料號與原生零件設定
+  function renderCurrentGroup() {
+    activeGroup = groupSelect.value || "G02";
+    currentGroupLabel.textContent = activeGroup;
+
+    const allData = getAllGroupStationParts();
+    const curParts = allData[activeGroup] || {};
+    const allRaw = getAllGroupRawConfigs();
+    const curRaw = allRaw[activeGroup] || {};
+    const locks = getGroupLocks();
+    const isLocked = !!locks[activeGroup];
+
+    STATIONS.forEach(st => {
+      const partInput = document.querySelector(`.station-part-input[data-station="${st}"]`);
+      if (partInput) {
+        partInput.value = curParts[st] || "";
+        partInput.readOnly = isLocked;
+        partInput.style.backgroundColor = isLocked ? "#e2e8f0" : "#fff";
+        partInput.style.color = isLocked ? "#1e293b" : "#000";
+        partInput.style.fontWeight = isLocked ? "bold" : "normal";
+      }
+
+      const check = document.getElementById(`rawCheck_${st}`);
+      const rawBox = document.getElementById(`rawBox_${st}`);
+      const nameInput = document.querySelector(`.station-raw-name[data-station="${st}"]`);
+      const initInput = document.querySelector(`.station-raw-init[data-station="${st}"]`);
+
+      const stRaw = curRaw[st] || {};
+      const hasRaw = !!stRaw.hasRaw;
+
+      if (check) {
+        check.checked = hasRaw;
+        check.disabled = isLocked;
+      }
+      if (nameInput) {
+        nameInput.value = stRaw.rawName || (st === "ST04" ? "零件5 (螺絲包)" : "零件5");
+        nameInput.readOnly = isLocked;
+        nameInput.style.backgroundColor = isLocked ? "#e2e8f0" : "#fff";
+      }
+      if (initInput) {
+        initInput.value = (stRaw.rawInit !== undefined) ? stRaw.rawInit : 10;
+        initInput.readOnly = isLocked;
+        initInput.style.backgroundColor = isLocked ? "#e2e8f0" : "#fff";
+      }
+      if (rawBox) {
+        rawBox.style.display = hasRaw ? "flex" : "none";
+      }
+    });
+
+    if (isLocked) {
+      lockBadge.textContent = `${activeGroup} 🔒 已鎖定`;
+      lockBadge.style.color = "#16a34a";
+      lockBtn.textContent = `✏️ 解鎖 ${activeGroup}`;
+      lockBtn.style.background = "#64748b";
+      lockHint.textContent = `✓ 【${activeGroup}】料號與物料屬性已鎖定並記憶於此瀏覽器，產生的 QR Code 都會帶入此組設定。`;
+      lockHint.style.color = "#16a34a";
+    } else {
+      lockBadge.textContent = `${activeGroup} 🔓 未鎖定`;
+      lockBadge.style.color = "#64748b";
+      lockBtn.textContent = `🔒 鎖定 ${activeGroup} 設定`;
+      lockBtn.style.background = "#2563eb";
+      lockHint.textContent = `💡 提示：輸入【${activeGroup}】各工站料號與原生零件後點擊鎖定，系統將為此組永久儲存。`;
+      lockHint.style.color = "#64748b";
+    }
+
+    highlightSelectedStation();
+  }
+
+  function highlightSelectedStation() {
+    const selectedSt = stationSelect.value;
+    const locks = getGroupLocks();
+    const isLocked = !!locks[activeGroup];
+    STATIONS.forEach(st => {
+      const card = document.getElementById(`partCard_${st}`);
+      if (card) {
+        if (st === selectedSt) {
+          card.style.border = "2px solid #2563eb";
+          card.style.backgroundColor = isLocked ? "#e2e8f0" : "#eff6ff";
+        } else {
+          card.style.border = "1px solid #cbd5e1";
+          card.style.backgroundColor = isLocked ? "#e2e8f0" : "#fff";
+        }
+      }
+    });
+  }
+
+  // 蒐集當前畫面上輸入的 8 站料號
+  function collectCurrentParts() {
+    const parts = {};
+    STATIONS.forEach(st => {
+      const input = document.querySelector(`.station-part-input[data-station="${st}"]`);
+      if (input && input.value.trim()) {
+        parts[st] = input.value.trim();
+      }
+    });
+    return parts;
+  }
+
+  // 蒐集當前畫面上輸入的 8 站原生零件設定
+  function collectCurrentRawConfigs() {
+    const configs = {};
+    STATIONS.forEach(st => {
+      const check = document.getElementById(`rawCheck_${st}`);
+      const nameInput = document.querySelector(`.station-raw-name[data-station="${st}"]`);
+      const initInput = document.querySelector(`.station-raw-init[data-station="${st}"]`);
+      if (check && check.checked) {
+        configs[st] = {
+          hasRaw: true,
+          rawName: (nameInput ? nameInput.value.trim() : "") || "零件5",
+          rawInit: parseInt(initInput ? initInput.value : "10", 10) || 10
+        };
+      } else {
+        configs[st] = { hasRaw: false };
+      }
+    });
+    return configs;
+  }
+
+  // 切換組別時先自動保存當前組別設定，再載入新組別
+  groupSelect.addEventListener("change", function(e) {
+    const oldGroup = activeGroup;
+    const locks = getGroupLocks();
+    if (!locks[oldGroup]) {
+      const allData = getAllGroupStationParts();
+      allData[oldGroup] = collectCurrentParts();
+      saveAllGroupStationParts(allData);
+
+      const allRaw = getAllGroupRawConfigs();
+      allRaw[oldGroup] = collectCurrentRawConfigs();
+      saveAllGroupRawConfigs(allRaw);
+    }
+    renderCurrentGroup();
+  });
+
+  stationSelect.addEventListener("change", highlightSelectedStation);
+
+  // 鎖定 / 解鎖當前組別
+  lockBtn.addEventListener("click", () => {
+    const locks = getGroupLocks();
+    const isLocked = !!locks[activeGroup];
+
+    if (isLocked) {
+      if (confirm(`確定要解除鎖定並修改【${activeGroup}】的各工站生產料號與物料設定嗎？`)) {
+        locks[activeGroup] = false;
+        saveGroupLocks(locks);
+        renderCurrentGroup();
+      }
+    } else {
+      const allData = getAllGroupStationParts();
+      allData[activeGroup] = collectCurrentParts();
+      saveAllGroupStationParts(allData);
+
+      const allRaw = getAllGroupRawConfigs();
+      allRaw[activeGroup] = collectCurrentRawConfigs();
+      saveAllGroupRawConfigs(allRaw);
+
+      locks[activeGroup] = true;
+      saveGroupLocks(locks);
+      renderCurrentGroup();
+    }
+  });
+
+  // 快速複製當前組別設定到所有其他組別
+  document.getElementById("copyToAllGroupsBtn").addEventListener("click", () => {
+    const curParts = collectCurrentParts();
+    const curRaw = collectCurrentRawConfigs();
+
+    if (confirm(`確定要將【${activeGroup}】的 8 站料號與原生零件設定複製給其他所有組別 (G01~G12) 嗎？\n\n這會將其他組別覆蓋為相同設定，後續仍可隨時個別調整。`)) {
+      const allData = getAllGroupStationParts();
+      const allRaw = getAllGroupRawConfigs();
+      GROUPS.forEach(g => {
+        allData[g] = { ...curParts };
+        allRaw[g] = JSON.parse(JSON.stringify(curRaw));
+      });
+      saveAllGroupStationParts(allData);
+      saveAllGroupRawConfigs(allRaw);
+      alert(`✓ 已成功將【${activeGroup}】的料號與物料設定複製套用至 G01~G12 全部組別！`);
+      renderCurrentGroup();
+    }
+  });
+
+  // 1. 產生單張 QR Code
+  document.getElementById("genSingleBtn").addEventListener("click", function() {
+    const group = groupSelect.value;
+    const station = stationSelect.value;
+
+    const allData = getAllGroupStationParts();
+    const allRaw = getAllGroupRawConfigs();
+    const locks = getGroupLocks();
+    if (!locks[group]) {
+      allData[group] = collectCurrentParts();
+      saveAllGroupStationParts(allData);
+      allRaw[group] = collectCurrentRawConfigs();
+      saveAllGroupRawConfigs(allRaw);
+      locks[group] = true;
+      saveGroupLocks(locks);
+      renderCurrentGroup();
+    }
+    const partNo = (allData[group] && allData[group][station]) || "";
+    const rawCfg = (allRaw[group] && allRaw[group][station]) || {};
+
+    const params = new URLSearchParams();
+    params.set("group", group);
+    params.set("station", station);
+    if (partNo) params.set("part", partNo);
+    if (rawCfg.hasRaw) {
+      params.set("has_raw", "1");
+      params.set("raw_name", rawCfg.rawName || "零件5");
+      params.set("raw_init", rawCfg.rawInit !== undefined ? rawCfg.rawInit : 10);
+    }
+
+    currentFullUrl = `${FIXED_BASE_URL}?${params.toString()}`;
+
+    document.getElementById("batchPrintArea").style.display = "none";
+    document.getElementById("singleResult").style.display = "block";
+
+    let rawTagHtml = "";
+    if (rawCfg.hasRaw) {
+      rawTagHtml = ` <span style='font-size:12px; color:#b45309; background:#fef3c7; border:1px solid #fde68a; padding:2px 8px; border-radius:6px; font-weight:bold;'>📦 原生零件: ${rawCfg.rawName || '零件5'} (備料:${rawCfg.rawInit || 10}顆)</span>`;
+    }
+
+    document.getElementById("qrTitle").innerHTML = `${group} - ${station} ${partNo ? `<span style='font-size:14px; color:#1e40af; font-weight:bold;'>(完工料號: ${partNo})</span>` : ''}${rawTagHtml}`;
+    document.getElementById("urlBox").textContent = currentFullUrl;
+
+    // 設定跳轉按鈕
+    document.getElementById("directLinkBtn").href = currentFullUrl;
+
+    const qrContainer = document.getElementById("qrcode");
+    qrContainer.innerHTML = "";
+    new QRCode(qrContainer, {
+      text: currentFullUrl,
+      width: 220,
+      height: 220,
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  });
+
+  // 下載單張 QR 圖片
+  document.getElementById("downloadImgBtn").onclick = () => {
+    const img = document.querySelector("#qrcode img");
+    if (!img) return;
+    const link = document.createElement("a");
+    link.href = img.src;
+    link.download = `QR_${groupSelect.value}_${stationSelect.value}.png`;
+    link.click();
+  };
+
+  // 2. 產生本組全部工站桌牌
+  document.getElementById("genAllBtn").addEventListener("click", function() {
+    const group = groupSelect.value;
+    const allData = getAllGroupStationParts();
+    const allRaw = getAllGroupRawConfigs();
+    const locks = getGroupLocks();
+    if (!locks[group]) {
+      allData[group] = collectCurrentParts();
+      saveAllGroupStationParts(allData);
+      allRaw[group] = collectCurrentRawConfigs();
+      saveAllGroupRawConfigs(allRaw);
+      locks[group] = true;
+      saveGroupLocks(locks);
+      renderCurrentGroup();
+    }
+
+    const groupParts = allData[group] || {};
+    const groupRaw = allRaw[group] || {};
+
+    document.getElementById("singleResult").style.display = "none";
+    const batchArea = document.getElementById("batchPrintArea");
+    const grid = document.getElementById("stationGrid");
+    batchArea.style.display = "block";
+    grid.innerHTML = "";
+
+    document.getElementById("batchTitle").innerHTML = `🪑 ${group} - 全工站個別料號 QR Code 桌牌`;
+
+    STATIONS.forEach(st => {
+      const partNo = groupParts[st] || "";
+      const rawCfg = groupRaw[st] || {};
+
+      const params = new URLSearchParams();
+      params.set("group", group);
+      params.set("station", st);
+      if (partNo) params.set("part", partNo);
+      if (rawCfg.hasRaw) {
+        params.set("has_raw", "1");
+        params.set("raw_name", rawCfg.rawName || "零件5");
+        params.set("raw_init", rawCfg.rawInit !== undefined ? rawCfg.rawInit : 10);
+      }
+
+      const url = `${FIXED_BASE_URL}?${params.toString()}`;
+
+      const card = document.createElement("div");
+      card.className = "station-card";
+      card.innerHTML = `
+        <h3 style="margin-bottom:4px;">${group} - ${st}</h3>
+        ${partNo ? `<div style="font-size:13px; font-weight:bold; color:#1e40af; margin-bottom:4px;">🏷️ 完工料號：${partNo}</div>` : `<div style="font-size:12px; color:#94a3b8; margin-bottom:4px;">(未設定料號)</div>`}
+        ${rawCfg.hasRaw ? `<div style="font-size:11px; font-weight:bold; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:3px 6px; border-radius:4px; margin-bottom:6px;">📦 包含原生件：${rawCfg.rawName || '零件5'}<br/>(初始備料: ${rawCfg.rawInit !== undefined ? rawCfg.rawInit : 10} 顆)</div>` : `<div style="font-size:11px; color:#64748b; margin-bottom:6px;">🔄 純半成品組裝</div>`}
+        <div class="mini-qr" id="qr_${st}"></div>
+      `;
+      grid.appendChild(card);
+
+      new QRCode(document.getElementById(`qr_${st}`), {
+        text: url,
+        width: 140,
+        height: 140,
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    });
+
+    batchArea.scrollIntoView({ behavior: 'smooth' });
+  });
+
+  // 初次載入渲染
+  renderCurrentGroup();
+</script>
+</body>
+</html>

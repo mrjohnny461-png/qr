@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IE Chair 即時同步監控中心</title>
+  <!-- 載入 Mermaid 繪圖庫 -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 1200px; margin: 30px auto; padding: 0 20px;
+      color: #1e293b; background: #f8fafc;
+    }
+    h1, h2 { color: #0f172a; }
+    .control-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      background: #fff; padding: 16px; border-radius: 12px;
+      border: 1px solid #e2e8f0; margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    }
+    select, button {
+      font-size: 15px; padding: 8px 14px; border-radius: 8px;
+      border: 1px solid #cbd5e1; cursor: pointer;
+    }
+    .btn-primary { background: #2563eb; color: #fff; border: none; font-weight: bold; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-edit { background: #7c3aed; color: #fff; border: none; font-weight: bold; }
+    .btn-edit:hover { background: #6d28d9; }
+    .btn-danger { background: #dc2626; color: #fff; border: none; }
+    .btn-secondary { background: #0284c7; color: #fff; border: none; }
+    
+    /* 即時同步動態圓點 */
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #ecfdf5; border: 1px solid #a7f3d0;
+      color: #065f46; padding: 6px 12px; border-radius: 20px;
+      font-size: 13px; font-weight: bold; margin-left: 10px;
+    }
+    .pulse-dot {
+      width: 10px; height: 10px; background-color: #10b981;
+      border-radius: 50%; display: inline-block;
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .card {
+      background: #fff; border-radius: 12px; padding: 20px;
+      margin-bottom: 24px; border: 1px solid #e2e8f0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    }
+    #flowchartContainer {
+      width: 100%; min-height: 200px; overflow-x: auto;
+      display: flex; justify-content: center; align-items: center;
+      background: #ffffff; border-radius: 8px; padding: 15px;
+    }
+    .legend {
+      display: flex; gap: 15px; font-size: 13px; color: #64748b;
+      margin-bottom: 12px; flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .color-box { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+
+    table {
+      width: 100%; border-collapse: collapse; margin-top: 10px;
+      background: #fff; border-radius: 8px; overflow: hidden;
+    }
+    th, td {
+      border: 1px solid #e2e8f0; padding: 10px 12px; text-align: center;
+      font-size: 14px;
+    }
+    th { background: #f1f5f9; color: #475569; font-weight: 600; }
+    tr:nth-child(even) { background: #f8fafc; }
+    
+    /* 彈跳視窗 Modal */
+    .modal {
+      display: none; position: fixed; z-index: 100; left: 0; top: 0;
+      width: 100%; height: 100%; background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(2px);
+    }
+    .modal-content {
+      background: #fff; margin: 40px auto; padding: 24px;
+      border-radius: 14px; max-width: 600px; width: 90%;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2);
+    }
+    .flow-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+      background: #f8fafc; padding: 8px 12px; border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🪑 IE Chair 組裝線即時監控中心</h1>
+  
+  <div class="control-bar">
+    <label><strong>組別：</strong></label>
+    <select id="groupSelect">
+      <option value="G01">G01</option>
+      <option value="G02" selected>G02</option>
+      <option value="G03">G03</option>
+      <option value="G04">G04</option>
+      <option value="G05">G05</option>
+      <option value="G06">G06</option>
+      <option value="G07">G07</option>
+      <option value="G08">G08</option>
+      <option value="G09">G09</option>
+      <option value="G10">G10</option>
+      <option value="G11">G11</option>
+      <option value="G12">G12</option>
+      <option value="ALL">全部組別 (僅表格)</option>
+    </select>
+
+    <button id="loadBtn" class="btn-primary">🔄 手動重新整理</button>
+    <button id="downloadBtn" disabled>📥 下載 CSV</button>
+    
+    <!-- 預設啟動即時同步 -->
+    <div class="live-badge">
+      <span class="pulse-dot"></span>
+      <span>即時同步：</span>
+      <select id="refreshIntervalSelect" style="padding:2px 6px; font-size:12px; border-radius:4px; border:1px solid #a7f3d0; background:#fff;">
+        <option value="3000" selected>每 3 秒</option>
+        <option value="5000">每 5 秒</option>
+        <option value="10000">每 10 秒</option>
+        <option value="0">暫停同步</option>
+      </select>
+    </div>
+
+    <button id="openFlowEditorBtn" class="btn-edit" style="margin-left:auto;">
+      🛠️ 自訂本組工站順序
+    </button>
+    <button id="deleteAllBtn" class="btn-danger">🗑️ 清空紀錄與庫存歸零</button>
+    <span id="status">即時更新中</span>
+  </div>
+
+  <!-- 區塊 1：工站流程順序圖與 站前/站後 WIP 看板 -->
+  <div class="card" id="flowCard">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h2 style="margin:0;">1. 工站順序圖與在製品 (WIP) 即時看板</h2>
+      <button onclick="openFlowModal()" style="font-size:13px; color:#7c3aed; background:none; border:none; cursor:pointer; text-decoration:underline;">
+        ✏️ 修改此順序圖
+      </button>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><span class="color-box" style="background:#dcfce7; border:1px solid #16a34a;"></span> 綠燈：流暢正常 (物料充足)</div>
+      <div class="legend-item"><span class="color-box" style="background:#fef9c3; border:1px solid #ca8a04;"></span> 黃燈：飢餓缺料 (站前為 0 件/套)</div>
+      <div class="legend-item"><span class="color-box" style="background:#fee2e2; border:2px solid #dc2626;"></span> 🚨 紅燈：瓶頸站（該組 Cycle Time 最大值）</div>
+    </div>
+    <div id="flowchartContainer">
+      <div style="color:#94a3b8;">載入流程圖中...</div>
+    </div>
+  </div>
+
+  <!-- 區塊 2：工站統計摘要 (Cycle Time, 等待時間, 稼動率) -->
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <h2 style="margin:0;">2. 統計摘要（依工站）</h2>
+      <span style="font-size:13px; color:#475569; background:#f1f5f9; padding:4px 10px; border-radius:6px;">🎯 產線瓶頸判定：<b>該組平均 Cycle Time 之最大值</b></span>
+    </div>
+    <p style="color:#64748b; font-size:14px; margin:6px 0 10px 0;">
+      說明：閒置時間 = 本站開始時間 − 前站結束時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
+    </p>
+
+    <!-- 瓶頸即時提醒橫幅 -->
+    <div id="bottleneckBanner" style="display:none; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:10px 14px; margin-bottom:12px; align-items:center; gap:8px;">
+      <span style="font-size:20px;">🚨</span>
+      <span style="font-weight:bold; color:#991b1b;" id="bottleneckBannerText">
+        本組產線瓶頸站：--
+      </span>
+    </div>
+
+    <table id="statTable">
+      <thead>
+        <tr>
+          <th>Station</th>
+          <th>生產料號</th>
+          <th>筆數</th>
+          <th>平均 Cycle Time (秒)</th>
+          <th>總作業時間 (秒)</th>
+          <th>平均等待時間 (秒)</th>
+          <th>總等待時間 (秒)</th>
+          <th>稼動率 (%)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- 區塊 3：詳細數據 -->
+  <div class="card">
+    <h2>3. 詳細生產歷程數據 (Event Log)</h2>
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th>No. (序號)</th>
+          <th>Group</th>
+          <th>Product</th>
+          <th>Station</th>
+          <th>工站料號</th>
+          <th>開工齊套數</th>
+          <th>開始時間</th>
+          <th>結束時間</th>
+          <th>作業秒數</th>
+          <th>完工累計</th>
+          <th>狀態</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- 彈跳視窗：工站自訂編輯器 -->
+  <div id="flowModal" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-top:0;">🛠️ 自訂工站前後流向關係</h3>
+      <div id="flowRowsContainer" style="max-height:300px; overflow-y:auto; margin: 15px 0;"></div>
+      <div style="display:flex; gap:10px;">
+        <button onclick="addFlowRow()" class="btn-secondary">+ 新增銜接關係</button>
+        <button onclick="presetStandardFlow()" style="background:#f1f5f9;">恢復 1→8 標準直線</button>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button onclick="closeFlowModal()">取消</button>
+        <button onclick="saveCustomFlow()" class="btn-primary">儲存並立即更新流程圖</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const SUPABASE_URL = "https://fqbsrcbxtmagczykoesv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
+
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+
+let currentEvents = [];
+const allStations = ["ST01","ST02","ST03","ST04","ST05","ST06","ST07","ST08"];
+let autoRefreshTimer = null;
+let refreshInterval = 3000;
+
+// 🏷️ 讀取各組別與各工站之生產料號
+function getStationPart(group, station) {
+  try {
+    const all = JSON.parse(localStorage.getItem("ie_chair_group_station_parts") || "{}");
+    if (group && all[group] && all[group][station]) return all[group][station];
+    const flat = JSON.parse(localStorage.getItem("ie_chair_station_parts") || "{}");
+    if (flat[station]) return flat[station];
+    const old = localStorage.getItem("ie_chair_locked_part_no");
+    if (station === "ST01" && old) return old;
+  } catch(e) {}
+  return "";
+}
+
+// 📦 讀取各組別與各工站之原生零件設定
+function getStationRaw(group, station) {
+  try {
+    const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+    if (group && all[group] && all[group][station]) return all[group][station];
+    if (station === "ST04") return { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 };
+  } catch(e) {}
+  return { hasRaw: false };
+}
+
+window.addEventListener("load", () => {
+  loadAll();
+  startAutoRefresh();
+});
+
+document.getElementById("groupSelect").onchange = loadAll;
+document.getElementById("loadBtn").onclick = loadAll;
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  if (refreshInterval > 0) {
+    autoRefreshTimer = setInterval(loadAll, refreshInterval);
+  }
+}
+
+document.getElementById("refreshIntervalSelect").onchange = function() {
+  refreshInterval = parseInt(this.value, 10);
+  startAutoRefresh();
+  if (refreshInterval === 0) {
+    document.getElementById("status").textContent = "已暫停同步";
+  } else {
+    document.getElementById("status").textContent = `每 ${refreshInterval / 1000} 秒同步中`;
+  }
+};
+
+// 一鍵清空全部數據與重置 WIP
+document.getElementById("deleteAllBtn").onclick = async () => {
+  const group = document.getElementById("groupSelect").value;
+  if (group === "ALL") {
+    alert("請先選擇特定的單一組別（例如 G02）再執行清空！");
+    return;
+  }
+
+  const ok = confirm(`⚠️ 警告：確定要清空【${group}】的所有計時紀錄，並將所有工站的站前/站後庫存全部歸零重置嗎？`);
+  if (!ok) return;
+
+  try {
+    document.getElementById("status").textContent = "正在清空與重置中...";
+
+    await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+      method: "PATCH",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+    });
+
+    alert(`✓ 【${group}】的生產紀錄已全數清空，庫存已全部歸零重置！各工站作業員可開始新一輪競賽。`);
+    loadAll();
+  } catch (err) {
+    alert("清空重置失敗：" + err.message);
+  }
+};
+
+// 核心讀取與渲染
+async function loadAll() {
+  const group = document.getElementById("groupSelect").value;
+
+  try {
+    // 依照開工時間由最早至最新排序 (正序，符合生產流動時間序)
+    let eventUrl = `${SUPABASE_URL}/rest/v1/event?select=*&order=start_time.asc`;
+    if (group !== "ALL") {
+      eventUrl += `&group_id=eq.${encodeURIComponent(group)}`;
+    }
+    const evRes = await fetch(eventUrl, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+    currentEvents = await evRes.json();
+
+    // 前端二次排序保證嚴格由最早至最新 (Earliest to Latest)
+    currentEvents.sort((a, b) => {
+      const tA = new Date(a.start_time || a.finish_time || a.created_at || 0).getTime();
+      const tB = new Date(b.start_time || b.finish_time || b.created_at || 0).getTime();
+      return tA - tB;
+    });
+
+    showTable(currentEvents);
+    showStats(currentEvents);
+    document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
+
+    if (group !== "ALL") {
+      document.getElementById("flowCard").style.display = "block";
+      await renderFlowDiagram(group);
+    } else {
+      document.getElementById("flowCard").style.display = "none";
+    }
+
+    const now = new Date().toLocaleTimeString();
+    document.getElementById("status").textContent = `最後同步：${now} (${currentEvents.length} 筆)`;
+  } catch (err) {
+    document.getElementById("status").textContent = "同步異常：" + err.message;
+  }
+}
+
+// 畫工站順序圖 (支援多站匯流齊套數計算)
+async function renderFlowDiagram(group) {
+  const container = document.getElementById("flowchartContainer");
+
+  const [flowRes, wipRes] = await Promise.all([
+    fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}&order=station_id.asc`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    }),
+    fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${group}`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    })
+  ]);
+
+  const flows = await flowRes.json();
+  const wips = await wipRes.json();
+
+  if (flows.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding: 20px;">
+        <p style="color:#64748b;">本組（${group}）尚未設定工站順序流程。</p>
+        <button onclick="openFlowModal()" class="btn-edit" style="padding:8px 16px;">
+          🛠️ 立即自訂本組工站順序
+        </button>
+      </div>`;
+    return;
+  }
+
+  const wipMap = {};
+  wips.forEach(w => {
+    wipMap[(w.station_id || "").trim()] = {
+      inWip: w.input_wip || 0,
+      outWip: w.output_wip || 0
+    };
+  });
+
+  const stationSet = new Set();
+  flows.forEach(f => {
+    if (f.station_id) stationSet.add(f.station_id.trim());
+    if (f.next_station_id) stationSet.add(f.next_station_id.trim());
+  });
+
+  let code = "graph LR\n";
+  const styles = [];
+
+  stationSet.forEach(stId => {
+    const w = wipMap[stId] || { inWip: 0, outWip: 0 };
+    const rawCfg = getStationRaw(group, stId);
+    const hasRaw = !!rawCfg.hasRaw;
+    const rawName = rawCfg.rawName || (stId === "ST04" ? "零件5" : "原生料");
+
+    // 找出所有前置來源站 (predecessors)
+    const predecessors = flows
+      .filter(f => (f.next_station_id || "").trim() === stId)
+      .map(f => (f.station_id || "").trim());
+
+    // 找出所有後續去向站 (successors)
+    const successors = flows
+      .filter(f => (f.station_id || "").trim() === stId)
+      .map(f => (f.next_station_id || "").trim())
+      .filter(Boolean);
+
+    // 1. 計算【站前可用量 / 齊套數】
+    let inQty = w.inWip;
+    const isMerge = predecessors.length > 1;
+
+    let feederKit = 0;
+    if (predecessors.length > 0) {
+      let minAvail = 999999;
+      predecessors.forEach(p => {
+        const pOut = wipMap[p]?.outWip || 0;
+        const avail = Math.max(0, pOut - w.outWip);
+        if (avail < minAvail) minAvail = avail;
+      });
+      feederKit = minAvail === 999999 ? 0 : minAvail;
+      inQty = hasRaw ? Math.min(feederKit, w.inWip) : feederKit;
+    } else {
+      inQty = w.inWip;
+    }
+
+    // 2. 計算【站後在庫量】: 本站完工 - 下游站完工消耗 (若無下游站則為總成品數)
+    const isFinalStation = successors.length === 0;
+    let currentOutBuffer = w.outWip;
+
+    if (!isFinalStation) {
+      let downstreamConsumed = 0;
+      successors.forEach(s => {
+        const sOut = wipMap[s]?.outWip || 0;
+        if (sOut > downstreamConsumed) downstreamConsumed = sOut;
+      });
+      currentOutBuffer = Math.max(0, w.outWip - downstreamConsumed);
+    }
+
+    // 3. 節點標籤呈現
+    let inText = "";
+    if (predecessors.length === 0) {
+      inText = hasRaw ? `📥 ${rawName}: ${w.inWip}顆` : "📥 原料充足";
+    } else if (hasRaw) {
+      inText = `📥 半成品: ${feederKit}套 ｜ ${rawName}: ${w.inWip}顆 ➔ 可開工: ${inQty}套`;
+    } else {
+      inText = `📥 站前: ${inQty}${isMerge ? '套' : '件'}`;
+    }
+
+    let outText = "";
+    if (isFinalStation) {
+      outText = `📤 總成品: ${currentOutBuffer}`;
+    } else {
+      outText = `📤 站後: ${currentOutBuffer}`;
+    }
+
+    const partNo = getStationPart(group, stId);
+    let partTag = partNo ? `<br><b style='color:#1e40af; font-size:12px;'>🏷️ 料號: ${partNo}</b>` : "";
+    if (hasRaw) {
+      partTag += `<br><span style='color:#b45309; font-size:11px; font-weight:bold;'>📦 含原生件: ${rawName}</span>`;
+    }
+
+    const isBottleneck = (stId === window.currentBottleneckStation && window.currentMaxCycle > 0);
+    const bottleneckTag = isBottleneck ? `<br><b style='color:#dc2626;'>🚨 瓶頸站 (CT: ${window.currentMaxCycle.toFixed(1)}s)</b>` : "";
+
+    code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText} ｜ ${outText}${bottleneckTag}"]\n`;
+
+    // 4. 顏色預警邏輯 (嚴格符合圖例規範)：
+    if (isBottleneck) {
+      styles.push(`style ${stId} fill:#fee2e2,stroke:#dc2626,stroke-width:4px;`); // 🚨 紅燈 (瓶頸站，Cycle Time 最大值)
+    } else if (hasRaw && w.inWip === 0) {
+      styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (現場原生零件缺料)
+    } else if (predecessors.length > 0 && feederKit === 0) {
+      styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (下游半成品缺料飢餓)
+    } else {
+      styles.push(`style ${stId} fill:#dcfce7,stroke:#16a34a,stroke-width:2px;`); // 綠燈 (流暢正常，物料充足)
+    }
+  });
+
+  flows.forEach(f => {
+    if (f.next_station_id) {
+      code += `  ${f.station_id.trim()} --> ${f.next_station_id.trim()}\n`;
+    }
+  });
+
+  code += styles.join("\n");
+
+  try {
+    const { svg } = await mermaid.render("mermaidGraph_" + Date.now(), code);
+    container.innerHTML = svg;
+  } catch (err) {
+    container.innerHTML = "<div style='color:red;'>流程圖語法產生錯誤</div>";
+  }
+}
+
+// 工站自訂編輯器 Modal
+document.getElementById("openFlowEditorBtn").onclick = openFlowModal;
+
+async function openFlowModal() {
+  const group = document.getElementById("groupSelect").value;
+  if (group === "ALL") {
+    alert("請先選擇特定的單一組別（例如 G02）再自訂工站流程！");
+    return;
+  }
+  document.getElementById("flowModal").style.display = "block";
+  const container = document.getElementById("flowRowsContainer");
+  container.innerHTML = "<div style='color:#64748b;'>載入現有順序...</div>";
+
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}&order=station_id.asc`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+  });
+  const data = await res.json();
+  container.innerHTML = "";
+
+  if (data.length > 0) {
+    data.forEach(item => addFlowRow(item.station_id, item.next_station_id));
+  } else {
+    presetStandardFlow();
+  }
+}
+
+function closeFlowModal() {
+  document.getElementById("flowModal").style.display = "none";
+}
+
+function addFlowRow(fromSt = "ST01", toSt = "") {
+  const container = document.getElementById("flowRowsContainer");
+  const row = document.createElement("div");
+  row.className = "flow-row";
+
+  let fromOptions = allStations.map(s => `<option value="${s}" ${s === fromSt ? "selected" : ""}>${s}</option>`).join("");
+  let toOptions = `<option value="">-- 無(產線終點) --</option>` +
+    allStations.map(s => `<option value="${s}" ${s === toSt ? "selected" : ""}>${s}</option>`).join("");
+
+  row.innerHTML = `
+    <select class="from-st">${fromOptions}</select>
+    <span style="font-weight:bold; color:#64748b;">➡️ 送往 ➡️</span>
+    <select class="to-st">${toOptions}</select>
+    <button onclick="this.parentElement.remove()" style="background:#fee2e2; border:none; color:#dc2626; border-radius:6px; padding:6px 10px;">🗑️</button>
+  `;
+  container.appendChild(row);
+}
+
+function presetStandardFlow() {
+  const container = document.getElementById("flowRowsContainer");
+  container.innerHTML = "";
+  for (let i = 0; i < allStations.length; i++) {
+    const cur = allStations[i];
+    const nxt = (i < allStations.length - 1) ? allStations[i+1] : "";
+    addFlowRow(cur, nxt);
+  }
+}
+
+async function saveCustomFlow() {
+  const group = document.getElementById("groupSelect").value;
+  const rows = document.querySelectorAll("#flowRowsContainer .flow-row");
+  if (rows.length === 0) {
+    alert("請至少設定一個工站！");
+    return;
+  }
+
+  const payload = [];
+  rows.forEach(r => {
+    const from = r.querySelector(".from-st").value;
+    const to = r.querySelector(".to-st").value || null;
+    payload.push({
+      group_id: group,
+      station_id: from,
+      station_name: from,
+      next_station_id: to
+    });
+  });
+
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+
+    await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    alert("✓ 流程已成功儲存，順序圖已即時更新！");
+    closeFlowModal();
+    loadAll();
+  } catch (err) {
+    alert("儲存失敗：" + err.message);
+  }
+}
+
+// 顯示詳細 Event Table
+function showTable(data) {
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
+
+  data.forEach((row, idx) => {
+    const partNo = getStationPart(row.group_id, row.station_id);
+    const tr = document.createElement("tr");
+
+    // 簡化 ID 欄位：以簡潔序號 (#1, #2...) 呈現，滑鼠懸浮可查看完整 UUID
+    const shortId = `<span title="完整 UUID: ${row.id}" style="font-family:monospace; font-weight:bold; color:#475569; background:#f1f5f9; padding:2px 8px; border-radius:4px; cursor:help;">#${idx + 1}</span>`;
+
+    // 美化開工齊套數：9999 轉為「充足 (起點)」，0 標註缺料
+    let wipDisplay = row.wip_before_start;
+    if (wipDisplay === 9999 || wipDisplay >= 999) {
+      wipDisplay = `<span style="color:#16a34a; font-weight:bold;">充足 (起點)</span>`;
+    } else if (wipDisplay === 0) {
+      wipDisplay = `<span style="color:#dc2626; font-weight:bold;">0 套 (缺料)</span>`;
+    } else if (wipDisplay !== null && wipDisplay !== undefined) {
+      wipDisplay = `<span style="font-weight:bold;">${wipDisplay} 套</span>`;
+    } else {
+      wipDisplay = `<span style="color:#94a3b8;">-</span>`;
+    }
+
+    const values = [
+      shortId,
+      row.group_id,
+      row.product_id,
+      row.station_id,
+      partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : "-",
+      wipDisplay,
+      row.start_time ? new Date(row.start_time).toLocaleTimeString() : "",
+      row.finish_time ? new Date(row.finish_time).toLocaleTimeString() : "",
+      row.duration_sec ?? "-",
+      row.wip_after_finish ?? "-",
+      row.status
+    ];
+
+    values.forEach((v, idx) => {
+      const td = document.createElement("td");
+      if (idx === 0 || idx === 4 || idx === 5) {
+        td.innerHTML = v;
+      } else {
+        td.textContent = v ?? "";
+      }
+      tr.appendChild(td);
+    });
+
+    const actionTd = document.createElement("td");
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "刪除";
+    delBtn.className = "btn-danger";
+    delBtn.onclick = () => deleteRecord(row.id);
+    actionTd.appendChild(delBtn);
+    tr.appendChild(actionTd);
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function deleteRecord(id) {
+  if (!confirm(`確定要刪除 ID: ${id} 嗎？`)) return;
+  await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${id}`, {
+    method: "DELETE",
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+  });
+  loadAll();
+}
+
+// 統計分析
+function showStats(data) {
+  const tbody = document.querySelector("#statTable tbody");
+  tbody.innerHTML = "";
+
+  const rows = data.filter(r => r.status === "COMPLETED");
+  const flows = {};
+  rows.forEach(r => {
+    const key = (r.group_id ?? "") + "||" + (r.product_id ?? "");
+    if (!flows[key]) flows[key] = [];
+    flows[key].push(r);
+  });
+
+  const stats = {};
+  function ensure(station) {
+    if (!stats[station]) stats[station] = { qty: 0, runSum: 0, waitSum: 0 };
+    return stats[station];
+  }
+
+  Object.values(flows).forEach(flowRows => {
+    const sorted = flowRows.slice().sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    let prevFinish = null;
+
+    sorted.forEach(r => {
+      const station = r.station_id ?? "(未知)";
+      const s = ensure(station);
+      const dur = Number(r.duration_sec) || 0;
+
+      const startMs = new Date(r.start_time).getTime();
+      let waitSec = 0;
+      if (prevFinish !== null && !isNaN(startMs)) {
+        waitSec = (startMs - prevFinish) / 1000;
+        if (waitSec < 0) waitSec = 0;
+        if (waitSec > 600) waitSec = 0;
+      }
+
+      s.qty += 1;
+      s.runSum += dur;
+      s.waitSum += waitSec;
+
+      const finishMs = new Date(r.finish_time).getTime();
+      if (!isNaN(finishMs)) prevFinish = finishMs;
+    });
+  });
+
+  const stationKeys = Object.keys(stats).sort((a,b) => a.localeCompare(b));
+  let totalQty = 0, totalRun = 0, totalWait = 0;
+
+  // 1. 找出該組 Cycle Time 最大值之瓶頸工站
+  let maxAvgCycle = 0;
+  let bottleneckStation = null;
+  stationKeys.forEach(station => {
+    const s = stats[station];
+    const avg = s.qty > 0 ? (s.runSum / s.qty) : 0;
+    s.avgCycle = avg;
+    if (s.qty > 0 && avg > maxAvgCycle) {
+      maxAvgCycle = avg;
+      bottleneckStation = station;
+    }
+  });
+
+  window.currentBottleneckStation = bottleneckStation;
+  window.currentMaxCycle = maxAvgCycle;
+
+  // 2. 顯示頂部瓶頸提醒橫幅
+  const banner = document.getElementById("bottleneckBanner");
+  const bannerText = document.getElementById("bottleneckBannerText");
+  if (bottleneckStation && maxAvgCycle > 0) {
+    banner.style.display = "flex";
+    bannerText.innerHTML = `本組產線瓶頸站：<b style="font-size:16px; color:#dc2626;">${bottleneckStation}</b>（平均 Cycle Time: <b style="font-size:16px; color:#dc2626;">${maxAvgCycle.toFixed(1)} 秒</b>，為全組最大值，限制整條線之最大產出率）`;
+  } else {
+    banner.style.display = "none";
+  }
+
+  // 3. 渲染統計表格
+  const curGroup = document.getElementById("groupSelect").value;
+
+  stationKeys.forEach(station => {
+    const s = stats[station];
+    const avgCycle = s.avgCycle;
+    const avgWait = s.qty > 0 ? s.waitSum / s.qty : 0;
+    const denom = s.runSum + s.waitSum;
+    const util = denom > 0 ? (s.runSum / denom) * 100 : 0;
+
+    totalQty += s.qty;
+    totalRun += s.runSum;
+    totalWait += s.waitSum;
+
+    const isBottleneck = (station === bottleneckStation && maxAvgCycle > 0);
+    const tr = document.createElement("tr");
+    if (isBottleneck) {
+      tr.style.backgroundColor = "#fef2f2";
+      tr.style.fontWeight = "bold";
+    }
+
+    const stationDisplay = isBottleneck
+      ? `${station} <span style="background:#ef4444; color:#fff; font-size:11px; padding:2px 6px; border-radius:4px; margin-left:4px;">🚨 瓶頸站 (Max CT)</span>`
+      : station;
+
+    const partNo = getStationPart(curGroup, station);
+    const rawCfg = getStationRaw(curGroup, station);
+    let partCell = partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : `<span style="color:#94a3b8;">-</span>`;
+    if (rawCfg.hasRaw) {
+      partCell += `<br><span style="font-size:11px; color:#b45309; font-weight:bold;">📦 含${rawCfg.rawName || '零件5'}</span>`;
+    }
+
+    const rowData = [
+      stationDisplay,
+      partCell,
+      s.qty,
+      avgCycle.toFixed(1),
+      Math.round(s.runSum),
+      avgWait.toFixed(1),
+      Math.round(s.waitSum),
+      util.toFixed(1)
+    ];
+
+    rowData.forEach((v, idx) => {
+      const td = document.createElement("td");
+      if (idx === 0 || idx === 1) {
+        td.innerHTML = v;
+      } else {
+        td.textContent = v;
+      }
+      if (isBottleneck && idx === 3) {
+        td.style.color = "#dc2626";
+        td.style.fontSize = "16px";
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  // 4. 渲染全組產線整體總結列 (Line Total / Overall Summary)
+  if (stationKeys.length > 0) {
+    const sumAvgCycle = stationKeys.reduce((acc, k) => acc + stats[k].avgCycle, 0);
+    const lineBalanceEff = (maxAvgCycle > 0 && stationKeys.length > 0)
+      ? ((sumAvgCycle / (stationKeys.length * maxAvgCycle)) * 100).toFixed(1)
+      : "0.0";
+    const overallAvgWait = totalQty > 0 ? (totalWait / totalQty).toFixed(1) : "0.0";
+    const totalDenom = totalRun + totalWait;
+    const overallUtil = totalDenom > 0 ? ((totalRun / totalDenom) * 100).toFixed(1) : "0.0";
+
+    const trTotal = document.createElement("tr");
+    trTotal.style.backgroundColor = "#f1f5f9";
+    trTotal.style.borderTop = "2px solid #94a3b8";
+    trTotal.style.fontWeight = "bold";
+
+    const totalRowData = [
+      `<span style="color:#1e40af; font-size:14px; font-weight:bold;">🎯 全組產線整體 (Line Total)</span>`,
+      `<span style="color:#64748b; font-size:13px;">全線合計 / 平衡分析</span>`,
+      totalQty,
+      `<div><b>${sumAvgCycle.toFixed(1)}</b> 秒 <span style="font-size:11px; color:#64748b; font-weight:normal;">(平均 ${(sumAvgCycle / stationKeys.length).toFixed(1)}s)</span></div><div style="font-size:11px; color:#16a34a; font-weight:bold; margin-top:2px;">🎯 線平衡率: ${lineBalanceEff}%</div>`,
+      Math.round(totalRun),
+      overallAvgWait,
+      Math.round(totalWait),
+      `<span style="color:#0f766e; font-size:15px; font-weight:bold;">${overallUtil}%</span>`
+    ];
+
+    totalRowData.forEach((v, idx) => {
+      const td = document.createElement("td");
+      if (idx === 0 || idx === 1 || idx === 3 || idx === 7) {
+        td.innerHTML = v;
+      } else {
+        td.textContent = v;
+      }
+      trTotal.appendChild(td);
+    });
+    tbody.appendChild(trTotal);
+  }
+}
+
+// 下載 CSV
+document.getElementById("downloadBtn").onclick = () => {
+  if (currentEvents.length === 0) return;
+  const cols = ["id","group_id","product_id","station_id","part_no","wip_before_start","start_time","finish_time","duration_sec","wip_after_finish","status"];
+  const csvRows = [cols.join(",")];
+
+  currentEvents.forEach(row => {
+    const partNo = getStationPart(row.group_id, row.station_id);
+    const r = [
+      row.id,
+      row.group_id,
+      row.product_id,
+      row.station_id,
+      `"${partNo || ''}"`,
+      row.wip_before_start ?? "",
+      row.start_time ?? "",
+      row.finish_time ?? "",
+      row.duration_sec ?? "",
+      row.wip_after_finish ?? "",
+      row.status
+    ];
+    csvRows.push(r.join(","));
+  });
+
+  const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `ie_chair_data_${document.getElementById("groupSelect").value}.csv`;
+  link.click();
+};
+</script>
+</body>
+</html>

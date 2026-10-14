@@ -164,7 +164,7 @@
       <span style="font-size:13px; color:#475569; background:#f1f5f9; padding:4px 10px; border-radius:6px;">🎯 產線瓶頸判定：<b>該組平均 Cycle Time 之最大值</b></span>
     </div>
     <p style="color:#64748b; font-size:14px; margin:6px 0 10px 0;">
-      說明：閒置時間 = 本站開始時間 − 前站結束時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
+      說明：等待時間 = 站內換件摸魚閒置（上一件完工至下一件開工）+ 下游等料飢餓時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
     </p>
 
     <!-- 瓶頸即時提醒橫幅 -->
@@ -690,46 +690,60 @@ function showStats(data) {
   tbody.innerHTML = "";
 
   const rows = data.filter(r => r.status === "COMPLETED");
-  const flows = {};
+
+  // 1. 取得整條產線最早開工時間 (基準起跑時間)
+  const allStartTimes = rows.map(r => new Date(r.start_time).getTime()).filter(t => !isNaN(t));
+  const lineStartTime = allStartTimes.length > 0 ? Math.min(...allStartTimes) : null;
+
+  // 2. 將紀錄依工站分組
+  const stationEvents = {};
   rows.forEach(r => {
-    const key = (r.group_id ?? "") + "||" + (r.product_id ?? "");
-    if (!flows[key]) flows[key] = [];
-    flows[key].push(r);
+    const st = r.station_id ?? "(未知)";
+    if (!stationEvents[st]) stationEvents[st] = [];
+    stationEvents[st].push(r);
   });
 
   const stats = {};
-  function ensure(station) {
-    if (!stats[station]) stats[station] = { qty: 0, runSum: 0, waitSum: 0 };
-    return stats[station];
-  }
+  const stationKeys = Object.keys(stationEvents).sort((a,b) => a.localeCompare(b));
 
-  Object.values(flows).forEach(flowRows => {
-    const sorted = flowRows.slice().sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-    let prevFinish = null;
+  stationKeys.forEach(station => {
+    // 依開工時間正序排序
+    const evs = stationEvents[station].slice().sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    let runSum = 0;
+    let waitSum = 0;
 
-    sorted.forEach(r => {
-      const station = r.station_id ?? "(未知)";
-      const s = ensure(station);
-      const dur = Number(r.duration_sec) || 0;
+    evs.forEach((r, idx) => {
+      runSum += Number(r.duration_sec) || 0;
 
-      const startMs = new Date(r.start_time).getTime();
-      let waitSec = 0;
-      if (prevFinish !== null && !isNaN(startMs)) {
-        waitSec = (startMs - prevFinish) / 1000;
-        if (waitSec < 0) waitSec = 0;
-        if (waitSec > 600) waitSec = 0;
+      if (idx === 0) {
+        // 第一件開工前的等待時間：
+        // 若為下游工站，產線開跑後等待前置站送達半成品的飢餓時間
+        const curStart = new Date(r.start_time).getTime();
+        if (lineStartTime !== null && !isNaN(curStart)) {
+          const preWait = (curStart - lineStartTime) / 1000;
+          if (preWait > 3 && preWait < 600) {
+            waitSum += preWait;
+          }
+        }
+      } else {
+        // 第二件起：站內「上一件完工至下一件開工」的中間閒置/摸魚/換件/等料時間
+        const prevFinish = new Date(evs[idx - 1].finish_time).getTime();
+        const curStart = new Date(r.start_time).getTime();
+        if (!isNaN(prevFinish) && !isNaN(curStart)) {
+          const gap = (curStart - prevFinish) / 1000;
+          if (gap > 0 && gap < 600) {
+            waitSum += gap;
+          }
+        }
       }
-
-      s.qty += 1;
-      s.runSum += dur;
-      s.waitSum += waitSec;
-
-      const finishMs = new Date(r.finish_time).getTime();
-      if (!isNaN(finishMs)) prevFinish = finishMs;
     });
-  });
 
-  const stationKeys = Object.keys(stats).sort((a,b) => a.localeCompare(b));
+    stats[station] = {
+      qty: evs.length,
+      runSum: runSum,
+      waitSum: waitSum
+    };
+  });
   let totalQty = 0, totalRun = 0, totalWait = 0;
 
   // 1. 找出該組 Cycle Time 最大值之瓶頸工站

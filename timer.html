@@ -329,6 +329,7 @@ let wipRecordId = null;
 
 let feederDetails = [];        // 前置站庫存詳情 [{ station, avail, ok }]
 let kitCount = 0;              // 當前可齊套組裝數
+let snapWipBeforeStart = 0;    // 開工瞬間齊套數
 
 let isWorking = false;
 let startTime = null;
@@ -336,10 +337,11 @@ let timerInterval = null;
 
 // 初始化
 async function init() {
-  showMsg("同步全產線物料關係...", "#64748b");
+  showMsg("同步全產線物料關係與歷史資料...", "#64748b");
   try {
     await updateFlowInfo();
     await fetchWipData();
+    await syncHistoryFromDb(); // 🌟 立即載入本站歷史紀錄，確保重整不消失
     await computeKitting();
     showMsg("就緒，隨時可開始作業", "#10b981");
 
@@ -578,7 +580,7 @@ async function updateWipDb(newIn, newOut) {
 document.getElementById("btnPlusIn").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
 document.getElementById("btnMinusIn").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
 
-// 背景雙向即時同步 (每 2 秒輪詢前置站點 output_wip)
+// 背景雙向即時同步 (每 2 秒輪詢前置站點庫存與本站歷史紀錄)
 async function autoSyncLive() {
   if (!wipRecordId) return;
 
@@ -590,22 +592,11 @@ async function autoSyncLive() {
     const wipData = await wipRes.json();
     if (wipData.length > 0) {
       manualBufferWip = wipData[0].input_wip || 0;
-      currentOutWip = wipData[0].output_wip || 0;
     }
 
-    // 檢查後台是否一鍵清空重置
-    if (!isWorking && currentOutWip > 0) {
-      const eventRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&station_id=eq.${stationId}&select=id`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
-      );
-      const evList = await eventRes.json();
-      if (evList.length === 0) {
-        currentOutWip = 0;
-        manualBufferWip = 0;
-        document.getElementById("historyList").innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">後台已重置，準備新一輪競賽</div>`;
-        showMsg("✓ 後台已重置，可重新開跑！", "#10b981");
-      }
+    // 若非計時中，同步雲端歷史事件紀錄 (確保重新整理、後台重置、多端同步時立即更新)
+    if (!isWorking) {
+      await syncHistoryFromDb();
     }
 
     await computeKitting();
@@ -623,6 +614,7 @@ mainBtn.addEventListener("click", async function() {
     }
 
     isWorking = true;
+    snapWipBeforeStart = kitCount; // 鎖定開工瞬間齊套數
     await computeKitting();
 
     const prodId = getCurProductCode();
@@ -643,11 +635,12 @@ mainBtn.addEventListener("click", async function() {
     const finishTime = new Date();
     const durationSec = Math.round((finishTime - startTime) / 1000);
     const finishedProduct = getCurProductCode();
+    const nextOut = currentOutWip + 1;
 
     try {
       // 1. 本站完工數 + 1；若包含現場原生零件，實體消耗 1 顆 (input_wip - 1)
       const nextIn = hasRawPart ? Math.max(0, manualBufferWip - 1) : manualBufferWip;
-      await updateWipDb(nextIn, currentOutWip + 1);
+      await updateWipDb(nextIn, nextOut);
 
       // 2. 一次性寫入 COMPLETED
       await fetch(`${SUPABASE_URL}/rest/v1/event`, {
@@ -664,12 +657,13 @@ mainBtn.addEventListener("click", async function() {
           finish_time: finishTime.toISOString(),
           duration_sec: durationSec,
           status: "COMPLETED",
-          wip_before_start: kitCount,
-          wip_after_finish: currentOutWip
+          wip_before_start: snapWipBeforeStart,
+          wip_after_finish: nextOut
         })
       });
 
-      addHistoryItem(currentOutWip, finishedProduct, durationSec, kitCount);
+      // 3. 立即自雲端資料庫重新同步歷史，確保序號與清單絕對精準
+      await syncHistoryFromDb();
 
       showMsg(`✓ 第 ${currentOutWip} 件完成！耗時 ${durationSec} 秒`, "#10b981");
 
@@ -684,18 +678,67 @@ mainBtn.addEventListener("click", async function() {
   }
 });
 
-function addHistoryItem(count, prod, sec, wip) {
-  const list = document.getElementById("historyList");
-  if (count === 1) list.innerHTML = "";
+// 🌟 從資料庫雲端同步歷史紀錄 (徹底解決重整資料消失、序號重複、跳號缺漏問題)
+async function syncHistoryFromDb() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/event?group_id=eq.${groupId}&station_id=eq.${stationId}&status=eq.COMPLETED&select=*&order=start_time.asc`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const events = await res.json();
+    if (!Array.isArray(events)) return;
 
-  const item = document.createElement("div");
-  item.className = "history-item";
-  item.innerHTML = `
-    <span><strong>#${count}</strong> (${prod})</span>
-    <span>工時: <b>${sec}秒</b></span>
-    <span style="color:#64748b;">開工齊套數: ${wip}</span>
-  `;
-  list.insertBefore(item, list.firstChild);
+    // 嚴格依開始時間正序排序
+    events.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+
+    currentOutWip = events.length;
+    document.getElementById("wipOutText").textContent = currentOutWip;
+    document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
+
+    const list = document.getElementById("historyList");
+    if (events.length === 0) {
+      list.innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">尚未開始作業</div>`;
+      if (!isWorking && (isRootStation || kitCount > 0)) {
+        enableStartButton(`▶ 開始第 1 次作業`);
+      }
+      return;
+    }
+
+    // 渲染歷史列表 (最新完工置頂)
+    list.innerHTML = "";
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      const seqNo = i + 1; // 依資料庫筆數嚴格編號 1, 2, 3, 4，絕不重複、絕不跳號
+      const prodCode = ev.product_id || `P${String(seqNo).padStart(2, '0')}`;
+      const sec = ev.duration_sec ?? 0;
+
+      let wipDisplay = ev.wip_before_start;
+      if (wipDisplay === 9999 || wipDisplay >= 999) {
+        wipDisplay = "9999";
+      } else if (wipDisplay === 0) {
+        wipDisplay = "0";
+      } else if (wipDisplay !== null && wipDisplay !== undefined) {
+        wipDisplay = `${wipDisplay}`;
+      } else {
+        wipDisplay = "-";
+      }
+
+      const item = document.createElement("div");
+      item.className = "history-item";
+      item.innerHTML = `
+        <span><strong>#${seqNo}</strong> (${prodCode})</span>
+        <span>工時: <b>${sec}秒</b></span>
+        <span style="color:#64748b;">開工齊套數: ${wipDisplay}</span>
+      `;
+      list.appendChild(item);
+    }
+
+    if (!isWorking && (isRootStation || kitCount > 0)) {
+      enableStartButton(`▶ 開始第 ${currentOutWip + 1} 次作業`);
+    }
+  } catch (err) {
+    console.error("同步歷史紀錄異常:", err);
+  }
 }
 
 function startTimer() {

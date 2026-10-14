@@ -468,11 +468,13 @@ async function computeKitting() {
 
   const feederKit = feederStations.length > 0 ? (minFeederAvail === 999999 ? 0 : minFeederAvail) : 0;
 
-  // 🌟 萬能齊套：若包含現場原生零件，需同時滿足「前站半成品齊套」與「本站原生零件庫存」！
+  // 🌟 萬能齊套：
+  // 1. 若包含現場原生零件：需同時滿足「前站半成品齊套」與「本站原生零件庫存」！
+  // 2. 若為一般中間站：站前可組裝數 = 前站半成品可用量 (feederKit) + 現場預發初始備料 (manualBufferWip)
   if (hasRawPart) {
     kitCount = Math.min(feederKit, manualBufferWip);
   } else {
-    kitCount = feederKit;
+    kitCount = feederKit + manualBufferWip;
   }
 
   refreshUiNumbers();
@@ -480,7 +482,12 @@ async function computeKitting() {
 
 // 刷新介面數字與按鈕狀態
 function refreshUiNumbers() {
-  document.getElementById("wipInText").textContent = manualBufferWip;
+  // 若為原生零件站或起點站，顯示原生料盒庫存；若為中間站，顯示當前真正齊套可組裝數
+  if (hasRawPart || isRootStation) {
+    document.getElementById("wipInText").textContent = manualBufferWip;
+  } else {
+    document.getElementById("wipInText").textContent = kitCount;
+  }
   document.getElementById("wipOutText").textContent = currentOutWip;
   document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
 
@@ -638,8 +645,8 @@ mainBtn.addEventListener("click", async function() {
     const nextOut = currentOutWip + 1;
 
     try {
-      // 1. 本站完工數 + 1；若包含現場原生零件，實體消耗 1 顆 (input_wip - 1)
-      const nextIn = hasRawPart ? Math.max(0, manualBufferWip - 1) : manualBufferWip;
+      // 1. 本站完工數 + 1；若現場原生零件或預發備料大於 0，完工實體扣減 1 件 (input_wip - 1)
+      const nextIn = Math.max(0, manualBufferWip - 1);
       await updateWipDb(nextIn, nextOut);
 
       // 2. 一次性寫入 COMPLETED

@@ -783,7 +783,7 @@ mainBtn.addEventListener("click", async function() {
     clearInterval(timerInterval);
 
     const finishTime = new Date();
-    const durationSec = Math.round((finishTime - startTime) / 1000);
+    const durationSec = Number(((finishTime - startTime) / 1000).toFixed(1));
     const finishedProduct = getCurProductCode();
     const nextOut = currentOutWip + 1;
 
@@ -866,7 +866,7 @@ async function syncHistoryFromDb() {
       const ev = events[i];
       const seqNo = i + 1; // 依資料庫筆數嚴格編號 1, 2, 3, 4，絕不重複、絕不跳號
       const prodCode = ev.product_id || `P${String(seqNo).padStart(2, '0')}`;
-      const sec = ev.duration_sec ?? 0;
+      const sec = (ev.duration_sec !== null && ev.duration_sec !== undefined) ? Number(ev.duration_sec).toFixed(1) : "0.0";
 
       let wipDisplay = ev.wip_before_start;
       if (wipDisplay === 9999 || wipDisplay >= 999) {

@@ -659,7 +659,7 @@ function showTable(data) {
       wipDisplay,
       row.start_time ? new Date(row.start_time).toLocaleTimeString() : "",
       row.finish_time ? new Date(row.finish_time).toLocaleTimeString() : "",
-      row.duration_sec ?? "-",
+      (row.duration_sec !== null && row.duration_sec !== undefined) ? Number(row.duration_sec).toFixed(1) : "-",
       row.wip_after_finish ?? "-",
       row.status
     ];
@@ -820,9 +820,9 @@ function showStats(data) {
       partCell,
       s.qty,
       avgCycle.toFixed(1),
-      Math.round(s.runSum),
+      s.runSum.toFixed(1),
       avgWait.toFixed(1),
-      Math.round(s.waitSum),
+      s.waitSum.toFixed(1),
       util.toFixed(1)
     ];
 
@@ -862,9 +862,9 @@ function showStats(data) {
       `<span style="color:#64748b; font-size:13px;">全線合計 / 平衡分析</span>`,
       totalQty,
       `<div><b>${sumAvgCycle.toFixed(1)}</b> 秒 <span style="font-size:11px; color:#64748b; font-weight:normal;">(平均 ${(sumAvgCycle / stationKeys.length).toFixed(1)}s)</span></div><div style="font-size:11px; color:#16a34a; font-weight:bold; margin-top:2px;">🎯 線平衡率: ${lineBalanceEff}%</div>`,
-      Math.round(totalRun),
+      totalRun.toFixed(1),
       overallAvgWait,
-      Math.round(totalWait),
+      totalWait.toFixed(1),
       `<span style="color:#0f766e; font-size:15px; font-weight:bold;">${overallUtil}%</span>`
     ];
 

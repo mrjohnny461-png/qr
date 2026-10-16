@@ -435,6 +435,8 @@ async function renderFlowDiagram(group) {
     const isMerge = predecessors.length > 1;
 
     let feederKit = 0;
+    let totalSub = w.inWip;
+    let rawStock = 0;
     if (predecessors.length > 0) {
       let minAvail = 999999;
       predecessors.forEach(p => {
@@ -443,7 +445,15 @@ async function renderFlowDiagram(group) {
         if (avail < minAvail) minAvail = avail;
       });
       feederKit = minAvail === 999999 ? 0 : minAvail;
-      inQty = hasRaw ? Math.min(feederKit, w.inWip) : feederKit;
+      totalSub = feederKit + w.inWip;
+      if (hasRaw) {
+        rawStock = (wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined)
+          ? wipMap[stId + '_RAW'].inWip
+          : (rawCfg.rawInit ?? 10);
+        inQty = Math.min(totalSub, rawStock);
+      } else {
+        inQty = totalSub;
+      }
     } else {
       inQty = w.inWip;
     }
@@ -466,7 +476,7 @@ async function renderFlowDiagram(group) {
     if (predecessors.length === 0) {
       inText = hasRaw ? `📥 ${rawName}: ${w.inWip}顆` : "📥 原料充足";
     } else if (hasRaw) {
-      inText = `📥 半成品: ${feederKit}套 ｜ ${rawName}: ${w.inWip}顆 ➔ 可開工: ${inQty}套`;
+      inText = `📥 半成品: ${totalSub}套 ｜ ${rawName}: ${rawStock}顆 ➔ 可開工: ${inQty}套`;
     } else {
       inText = `📥 站前: ${inQty}${isMerge ? '套' : '件'}`;
     }
@@ -492,10 +502,8 @@ async function renderFlowDiagram(group) {
     // 4. 顏色預警邏輯 (嚴格符合圖例規範)：
     if (isBottleneck) {
       styles.push(`style ${stId} fill:#fee2e2,stroke:#dc2626,stroke-width:4px;`); // 🚨 紅燈 (瓶頸站，Cycle Time 最大值)
-    } else if (hasRaw && w.inWip === 0) {
-      styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (現場原生零件缺料)
-    } else if (predecessors.length > 0 && feederKit === 0) {
-      styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (下游半成品缺料飢餓)
+    } else if (inQty === 0) {
+      styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (物料缺料飢餓，可開工為0)
     } else {
       styles.push(`style ${stId} fill:#dcfce7,stroke:#16a34a,stroke-width:2px;`); // 綠燈 (流暢正常，物料充足)
     }

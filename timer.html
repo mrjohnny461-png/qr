@@ -2,6 +2,9 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>IE Chair - 工站即時同步計時器</title>
   <style>
@@ -194,7 +197,8 @@
 
   <!-- 站前與站後 WIP 看板 -->
   <div class="card">
-    <div class="wip-grid">
+    <!-- 一般工站 (純中間站或起點站) -->
+    <div class="wip-grid" id="normalWipGrid">
       <!-- 站前可用/備料 -->
       <div class="wip-box wip-in">
         <div class="wip-title" id="inTitle">📥 站前可用量</div>
@@ -212,6 +216,46 @@
         <div class="wip-counter" style="justify-content:center; min-height:40px;">
           <span class="wip-val" id="wipOutText" style="font-size:36px; color:#059669;">0</span>
         </div>
+      </div>
+    </div>
+
+    <!-- 混合工站專用 (雙庫存控制看板：組件備料 + 原生零件料盒 + 站後完工) -->
+    <div id="mixedWipGrid" style="display:none;">
+      <div class="wip-grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+        <!-- 1. 前置半成品組件 (Buffer 備料) -->
+        <div class="wip-box wip-in" style="padding: 10px 4px;">
+          <div class="wip-title" style="font-size:12px;">🧩 前置半成品</div>
+          <div class="wip-subtitle" style="font-size:11px;">組件備料 (套)</div>
+          <div class="wip-counter">
+            <button class="wip-btn btn-in" id="btnMinusSub">-</button>
+            <span class="wip-val" id="wipSubText" style="font-size:26px;">0</span>
+            <button class="wip-btn btn-in" id="btnPlusSub">+</button>
+          </div>
+        </div>
+        <!-- 2. 現場原生零件 (料盒庫存) -->
+        <div class="wip-box" style="background:#fffbeb; border:1px solid #fde68a; text-align:center; border-radius:12px; padding: 10px 4px;">
+          <div class="wip-title" id="mixedRawTitle" style="color:#b45309; font-size:12px; font-weight:bold;">📦 現場原生料</div>
+          <div class="wip-subtitle" id="mixedRawSubtitle" style="color:#d97706; font-size:11px;">零件庫存 (顆)</div>
+          <div class="wip-counter">
+            <button class="wip-btn" id="btnMinusRaw" style="background:#f59e0b;">-</button>
+            <span class="wip-val" id="wipRawText" style="font-size:26px; color:#b45309;">0</span>
+            <button class="wip-btn" id="btnPlusRaw" style="background:#f59e0b;">+</button>
+          </div>
+        </div>
+        <!-- 3. 站後已完成 -->
+        <div class="wip-box wip-out" style="padding: 10px 4px;">
+          <div class="wip-title" style="font-size:12px;">📤 站後已完成</div>
+          <div class="wip-subtitle" style="font-size:11px;">累計完工件數</div>
+          <div class="wip-counter" style="justify-content:center; min-height:40px;">
+            <span class="wip-val" id="wipOutTextMixed" style="font-size:26px; color:#059669;">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 齊套可開工總結標籤 -->
+      <div id="mixedKittingSummary" style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:8px 12px; margin-top:10px; font-size:13px; font-weight:bold; color:#065f46; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+        <span>🟢 齊套可開工數：<b id="mixedKitCountText" style="font-size:18px; color:#047857;">0</b> 套</span>
+        <span id="mixedKitFormulaText" style="font-size:12px; color:#059669; font-weight:normal;">min(組件 0套, 零件 0顆)</span>
       </div>
     </div>
 
@@ -309,9 +353,6 @@ if (hasRawPart) {
   if (noticeBox) noticeBox.style.display = "flex";
   const nameEl = document.getElementById("rawPartNameText");
   if (nameEl) nameEl.textContent = rawPartName;
-  document.getElementById("inTitle").innerHTML = "📦 現場原生零件";
-  document.getElementById("inSubtitle").textContent = `${rawPartName} 料盒庫存`;
-  document.getElementById("manualHintText").innerHTML = `💡 提示：本站需組裝現場原生料件【${rawPartName}】，可點擊 [+] [-] 補料/調整庫存。每次完工自動消耗 1 顆。`;
 }
 
 // 自動以完工數產生序號 (如 P01, P02, P03...)，無需人工輸入
@@ -323,9 +364,16 @@ let isRootStation = false;     // 是否為起點工站 (前無工作站)
 let feederStations = [];       // 前置工站清單 (如 ST02, ST04, ST06, ST07, ST08)
 let nextStationId = null;      // 下一站代號
 
-let manualBufferWip = 0;       // 作業員手動設定的原生零件庫存或備料 (input_wip)
+let manualBufferWip = 0;       // 作業員手動設定的半成品組件備料 (input_wip)
 let currentOutWip = 0;         // 站後累計完工數 (output_wip)
 let wipRecordId = null;
+
+let rawPartStock = 10;         // 混合工站專屬原生零件料盒庫存 (顆)
+let rawWipRecordId = null;
+
+function isMixedStation() {
+  return hasRawPart && !isRootStation && feederStations.length > 0;
+}
 
 let feederDetails = [];        // 前置站庫存詳情 [{ station, avail, ok }]
 let kitCount = 0;              // 當前可齊套組裝數
@@ -398,6 +446,7 @@ async function updateFlowInfo() {
 
 // 讀取本站自己的 station_wip 紀錄
 async function fetchWipData() {
+  // 1. 讀取本站主要 station_wip
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
@@ -408,7 +457,7 @@ async function fetchWipData() {
     manualBufferWip = data[0].input_wip || 0;
     currentOutWip = data[0].output_wip || 0;
   } else {
-    const initialInput = hasRawPart ? rawInitCount : 0;
+    const initialInput = (isRootStation && hasRawPart) ? rawInitCount : 0;
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
       method: "POST",
       headers: {
@@ -422,12 +471,39 @@ async function fetchWipData() {
     manualBufferWip = initialInput;
     currentOutWip = 0;
   }
+
+  // 2. 若為含原生件之下游混合工站，讀取其專屬的原生零件庫存 row (${stationId}_RAW)
+  if (isMixedStation()) {
+    const rawStId = `${stationId}_RAW`;
+    const rawRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${rawStId}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const rawData = await rawRes.json();
+    if (rawData.length > 0) {
+      rawWipRecordId = rawData[0].id;
+      rawPartStock = (rawData[0].input_wip !== null && rawData[0].input_wip !== undefined) ? rawData[0].input_wip : rawInitCount;
+    } else {
+      const insertRawRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json", Prefer: "return=representation"
+        },
+        body: JSON.stringify({ group_id: groupId, station_id: rawStId, input_wip: rawInitCount, output_wip: 0 })
+      });
+      const createdRaw = await insertRawRes.json();
+      rawWipRecordId = createdRaw[0].id;
+      rawPartStock = rawInitCount;
+    }
+  }
 }
 
 // 🌟 核心計算：萬能齊套約束（BOM 1:1）計算
 async function computeKitting() {
   if (isRootStation || feederStations.length === 0) {
     kitCount = hasRawPart ? manualBufferWip : 9999;
+    window.currentTotalSub = kitCount;
     refreshUiNumbers();
     return;
   }
@@ -453,7 +529,7 @@ async function computeKitting() {
     const fWip = wipMap[fSt] || { output_wip: 0 };
     const fTotalOut = fWip.output_wip || 0;
     
-    // 前站半成品可用量 = 前站累計產出 - 本站累計已消耗量 (嚴格實體物流，絕不灌水)
+    // 前站半成品可用量 = 前站累計產出 - 本站累計已消耗量
     const avail = Math.max(0, fTotalOut - consumed);
 
     feederDetails.push({
@@ -468,27 +544,54 @@ async function computeKitting() {
 
   const feederKit = feederStations.length > 0 ? (minFeederAvail === 999999 ? 0 : minFeederAvail) : 0;
 
-  // 🌟 萬能齊套：
-  // 1. 若包含現場原生零件：需同時滿足「前站半成品齊套」與「本站原生零件庫存」！
-  // 2. 若為一般中間站：站前可組裝數 = 前站半成品可用量 (feederKit) + 現場預發初始備料 (manualBufferWip)
-  if (hasRawPart) {
-    kitCount = Math.min(feederKit, manualBufferWip);
+  // 🌟 萬能齊套 (Option 2)：
+  // 1. 組件可用套數 = 前站半成品送達數 (feederKit) + 現場預發組件備料 (manualBufferWip)
+  const totalSubassembly = feederKit + manualBufferWip;
+
+  // 2. 若為混合工站 (有前站 + 含原生零件)：需同時滿足「組件套數」與「原生零件庫存」
+  if (isMixedStation()) {
+    kitCount = Math.min(totalSubassembly, rawPartStock);
+  } else if (hasRawPart && isRootStation) {
+    kitCount = manualBufferWip;
   } else {
-    kitCount = feederKit + manualBufferWip;
+    kitCount = totalSubassembly;
   }
 
+  window.currentFeederKit = feederKit;
+  window.currentTotalSub = totalSubassembly;
   refreshUiNumbers();
 }
 
 // 刷新介面數字與按鈕狀態
 function refreshUiNumbers() {
-  // 若為原生零件站或起點站，顯示原生料盒庫存；若為中間站，顯示當前真正齊套可組裝數
-  if (hasRawPart || isRootStation) {
-    document.getElementById("wipInText").textContent = manualBufferWip;
+  const mixed = isMixedStation();
+
+  if (mixed) {
+    document.getElementById("normalWipGrid").style.display = "none";
+    document.getElementById("mixedWipGrid").style.display = "block";
+
+    document.getElementById("wipSubText").textContent = manualBufferWip;
+    document.getElementById("wipRawText").textContent = rawPartStock;
+    document.getElementById("wipOutTextMixed").textContent = currentOutWip;
+
+    const totalSub = window.currentTotalSub ?? (manualBufferWip);
+    document.getElementById("mixedKitCountText").textContent = kitCount;
+    document.getElementById("mixedKitFormulaText").textContent = `min(組件 ${totalSub}套, 零件 ${rawPartStock}顆)`;
+    document.getElementById("mixedRawTitle").innerHTML = `📦 現場原生料`;
+    document.getElementById("mixedRawSubtitle").textContent = `${rawPartName} 料盒庫存 (顆)`;
+    document.getElementById("manualHintText").innerHTML = `💡 提示：本站需組裝【前置組件】＋【${rawPartName}】。可點擊 [+] [-] 分別調整半成品備料與零件庫存。每次完工兩者皆自動扣減 1 件。`;
   } else {
-    document.getElementById("wipInText").textContent = kitCount;
+    document.getElementById("normalWipGrid").style.display = "grid";
+    document.getElementById("mixedWipGrid").style.display = "none";
+
+    if (hasRawPart || isRootStation) {
+      document.getElementById("wipInText").textContent = manualBufferWip;
+    } else {
+      document.getElementById("wipInText").textContent = kitCount;
+    }
+    document.getElementById("wipOutText").textContent = currentOutWip;
   }
-  document.getElementById("wipOutText").textContent = currentOutWip;
+
   document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
 
   // 渲染前置零件晶片
@@ -504,7 +607,7 @@ function refreshUiNumbers() {
 
     const badge = document.getElementById("kitSummaryBadge");
     if (kitCount > 0) {
-      badge.textContent = `可組裝：${kitCount} 套`;
+      badge.textContent = `可開工組裝：${kitCount} 套`;
       badge.style.color = "#16a34a";
     } else {
       badge.textContent = `⚠️ 缺料 (可組裝 0 套)`;
@@ -533,14 +636,15 @@ function refreshUiNumbers() {
     return;
   }
 
-  // 2. 若為下游工站 (前面有工站，如 ST04)
-  if (hasRawPart && manualBufferWip <= 0) {
-    disableStartButton(`⛔ 現場【${rawPartName}】缺料 (0 件)`);
+  // 2. 若為下游工站 (前面有工站，如 ST04, ST05)
+  if (mixed && rawPartStock <= 0) {
+    disableStartButton(`⛔ 現場【${rawPartName}】缺料 (0 顆)`);
     showMsg(`⚠️ 現場原生零件【${rawPartName}】料盒已空，請點擊 [+] 領料補入！`, "#dc2626");
   } else if (kitCount <= 0) {
     const missing = feederDetails.filter(d => !d.ok).map(d => d.station);
-    disableStartButton("⛔ 站前缺半成品（可組裝 0 套）");
-    showMsg(`⚠️ 缺料工站：[${missing.join(", ")}] 庫存不足，請等待前置工站完工送達！`, "#dc2626");
+    const reason = missing.length > 0 ? `缺料工站：[${missing.join(", ")}]` : "前置組件不足";
+    disableStartButton("⛔ 站前缺半成品組件（可組裝 0 套）");
+    showMsg(`⚠️ ${reason}，請等待前置工站完工送達或點擊 [+] 增加備料！`, "#dc2626");
   } else {
     enableStartButton(`▶ 開始第 ${currentOutWip + 1} 次作業`);
     showMsg(`✓ 物料齊全（可齊套 ${kitCount} 組），隨時可開始作業`, "#10b981");
@@ -561,7 +665,7 @@ function disableStartButton(text) {
   btn.className = "main-btn btn-disabled";
 }
 
-// 手動調整 WIP
+// 手動調整 WIP (半成品備料)
 async function updateWipDb(newIn, newOut) {
   if (newIn < 0) newIn = 0;
   if (newOut < 0) newOut = 0;
@@ -584,8 +688,36 @@ async function updateWipDb(newIn, newOut) {
   await computeKitting();
 }
 
+// 手動調整原生零件庫存 (混合工站專用)
+async function updateRawDb(newRaw) {
+  if (newRaw < 0) newRaw = 0;
+  rawPartStock = newRaw;
+
+  if (rawWipRecordId) {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${rawWipRecordId}`, {
+      method: "PATCH",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        input_wip: rawPartStock,
+        updated_at: new Date().toISOString()
+      })
+    });
+  }
+
+  await computeKitting();
+}
+
 document.getElementById("btnPlusIn").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
 document.getElementById("btnMinusIn").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
+
+document.getElementById("btnPlusSub").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
+document.getElementById("btnMinusSub").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
+
+document.getElementById("btnPlusRaw").onclick = () => updateRawDb(rawPartStock + 1);
+document.getElementById("btnMinusRaw").onclick = () => updateRawDb(rawPartStock - 1);
 
 // 背景雙向即時同步 (每 2 秒輪詢前置站點庫存與本站歷史紀錄)
 async function autoSyncLive() {
@@ -599,6 +731,17 @@ async function autoSyncLive() {
     const wipData = await wipRes.json();
     if (wipData.length > 0) {
       manualBufferWip = wipData[0].input_wip || 0;
+    }
+
+    if (rawWipRecordId) {
+      const rawRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/station_wip?id=eq.${rawWipRecordId}&select=input_wip`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const rawData = await rawRes.json();
+      if (rawData.length > 0) {
+        rawPartStock = (rawData[0].input_wip !== null && rawData[0].input_wip !== undefined) ? rawData[0].input_wip : rawPartStock;
+      }
     }
 
     // 若非計時中，同步雲端歷史事件紀錄 (確保重新整理、後台重置、多端同步時立即更新)
@@ -645,11 +788,17 @@ mainBtn.addEventListener("click", async function() {
     const nextOut = currentOutWip + 1;
 
     try {
-      // 1. 本站完工數 + 1；若現場原生零件或預發備料大於 0，完工實體扣減 1 件 (input_wip - 1)
+      // 1. 本站完工數 + 1；若現場預發半成品組件備料大於 0，完工實體扣減 1 件 (input_wip - 1)
       const nextIn = Math.max(0, manualBufferWip - 1);
       await updateWipDb(nextIn, nextOut);
 
-      // 2. 一次性寫入 COMPLETED
+      // 2. 若為混合工站，扣減 1 顆原生零件 (rawPartStock - 1)
+      if (isMixedStation()) {
+        const nextRaw = Math.max(0, rawPartStock - 1);
+        await updateRawDb(nextRaw);
+      }
+
+      // 3. 一次性寫入 COMPLETED
       await fetch(`${SUPABASE_URL}/rest/v1/event`, {
         method: "POST",
         headers: {
@@ -669,7 +818,7 @@ mainBtn.addEventListener("click", async function() {
         })
       });
 
-      // 3. 立即自雲端資料庫重新同步歷史，確保序號與清單絕對精準
+      // 4. 立即自雲端資料庫重新同步歷史，確保序號與清單絕對精準
       await syncHistoryFromDb();
 
       showMsg(`✓ 第 ${currentOutWip} 件完成！耗時 ${durationSec} 秒`, "#10b981");

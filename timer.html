@@ -375,15 +375,17 @@
     <div class="scan-tip-banner" id="scanTipBanner"></div>
 
     <!-- 相機鏡頭預覽畫面 -->
-    <div class="scanner-viewport-box" id="scannerViewportBox">
+    <div class="scanner-viewport-box" id="scannerViewportBox" style="position: relative; cursor: pointer;">
       <div id="qr-reader"></div>
+      <div id="scannerResumeHint" style="display:none; position:absolute; inset:0; background:rgba(15,23,42,0.85); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:15px; z-index:10;">
+        <span style="font-size:26px; margin-bottom:6px;">🔄</span>
+        <span style="font-size:14px; font-weight:bold;">畫面暫停中，點擊此處立即喚醒相機</span>
+      </div>
     </div>
 
-    <!-- 操作指引說明 -->
+    <!-- 操作指引說明 (僅保留防呆說明) -->
     <div class="scan-guide-box">
-      <div>⚡ <b>雙軌並存</b>：可點擊上方大按鈕，或使用手機相機掃描 QR Code。</div>
       <div>🛡️ <b>5秒防呆機制</b>：掃第 1 次開工；開工 5 秒內嚴格禁止完工！滿 5 秒後掃第 2 次完工存檔。</div>
-      <div id="scanLastRead" style="font-size: 11px; color: #94a3b8; margin-top: 5px;">尚未讀取任何條碼</div>
     </div>
   </div>
 
@@ -1091,21 +1093,86 @@ mainBtn.addEventListener("click", async function() {
 });
 
 // 雙軌模式 2：相機掃描控制器
+let isRestartingScanner = false;
+let scannerWasActiveBeforeHidden = false;
+
+// 重新啟動/喚醒相機串流 (解決手機切換分頁/跳出 App 後鏡頭變黑屏的問題)
+async function restartCameraScanner(silent = false) {
+  if (isRestartingScanner) return;
+  isRestartingScanner = true;
+
+  const viewportBox = document.getElementById("scannerViewportBox");
+  const resumeHint = document.getElementById("scannerResumeHint");
+  if (resumeHint) resumeHint.style.display = "none";
+
+  try {
+    if (!silent) showScanBanner("正在重新連接相機畫面...", "info", 1500);
+
+    // 1. 安全關閉並清理舊實例
+    if (html5QrCodeScanner) {
+      try {
+        if (html5QrCodeScanner.isScanning) {
+          await html5QrCodeScanner.stop();
+        }
+      } catch (e) {
+        console.warn("停止舊相機串流:", e);
+      }
+      try {
+        html5QrCodeScanner.clear();
+      } catch (e) {}
+    }
+
+    // 2. 重新初始化並掛載相機
+    html5QrCodeScanner = new Html5Qrcode("qr-reader");
+    const config = {
+      fps: 10,
+      qrbox: { width: 220, height: 220 },
+      aspectRatio: 1.0
+    };
+
+    await html5QrCodeScanner.start(
+      { facingMode: "environment" },
+      config,
+      onQrCodeScanned,
+      onQrScanError
+    );
+
+    isScannerRunning = true;
+    scannerWasActiveBeforeHidden = true;
+    if (viewportBox) viewportBox.style.display = "block";
+    updateScannerBadge();
+    if (!silent) showScanBanner("相機已成功喚醒！", "success", 2000);
+
+  } catch (err) {
+    console.warn("自動重啟相機被瀏覽器政策暫停，顯示點擊喚醒按鈕:", err);
+    if (resumeHint && isScannerRunning) {
+      resumeHint.style.display = "flex";
+    }
+  } finally {
+    isRestartingScanner = false;
+  }
+}
+
 async function toggleCameraScanner() {
   const btn = document.getElementById("btnToggleScanner");
   const viewportBox = document.getElementById("scannerViewportBox");
+  const resumeHint = document.getElementById("scannerResumeHint");
 
   if (isScannerRunning) {
     // 關閉相機
     try {
       if (html5QrCodeScanner) {
-        await html5QrCodeScanner.stop();
+        if (html5QrCodeScanner.isScanning) {
+          await html5QrCodeScanner.stop();
+        }
         html5QrCodeScanner.clear();
       }
     } catch (e) {
       console.warn("停止相機時提示:", e);
     }
     isScannerRunning = false;
+    scannerWasActiveBeforeHidden = false;
+    if (resumeHint) resumeHint.style.display = "none";
     viewportBox.style.display = "none";
     btn.textContent = "▶ 開啟相機";
     btn.style.background = "#eff6ff";
@@ -1123,6 +1190,7 @@ async function toggleCameraScanner() {
       btn.textContent = "⏳ 啟動中...";
       btn.disabled = true;
       viewportBox.style.display = "block";
+      if (resumeHint) resumeHint.style.display = "none";
 
       html5QrCodeScanner = new Html5Qrcode("qr-reader");
 
@@ -1141,6 +1209,7 @@ async function toggleCameraScanner() {
       );
 
       isScannerRunning = true;
+      scannerWasActiveBeforeHidden = true;
       btn.disabled = false;
       btn.textContent = "⏹ 關閉相機";
       btn.style.background = "#fee2e2";
@@ -1165,6 +1234,7 @@ async function toggleCameraScanner() {
       btn.style.background = "#eff6ff";
       btn.style.color = "#2563eb";
       isScannerRunning = false;
+      scannerWasActiveBeforeHidden = false;
       updateScannerBadge();
       alert("無法啟動相機，請確認瀏覽器已允許相機存取權限。\n錯誤資訊: " + (err.message || err));
     }
@@ -1187,13 +1257,6 @@ async function onQrCodeScanned(decodedText, decodedResult) {
   }
   lastDecodedText = decodedText;
   lastDecodedTime = now;
-
-  // 更新讀取記錄文字
-  const lastReadEl = document.getElementById("scanLastRead");
-  if (lastReadEl) {
-    const timeStr = new Date().toLocaleTimeString();
-    lastReadEl.textContent = `[${timeStr}] 讀取內容: ${decodedText.slice(0, 35)}${decodedText.length > 35 ? '...' : ''}`;
-  }
 
   // 3. 工站防呆檢驗
   const validation = validateQrContent(decodedText);
@@ -1246,6 +1309,72 @@ function validateQrContent(text) {
 
 // 綁定相機啟動開關按鈕
 document.getElementById("btnToggleScanner").addEventListener("click", toggleCameraScanner);
+
+// 點擊畫面黑屏/預覽框時手動強制喚醒鏡頭 (應對 iOS Safari 手勢喚醒限制)
+const viewportEl = document.getElementById("scannerViewportBox");
+if (viewportEl) {
+  viewportEl.addEventListener("click", () => {
+    if (isScannerRunning) {
+      const video = document.querySelector("#qr-reader video");
+      const resumeHint = document.getElementById("scannerResumeHint");
+      const isDead = !video || video.paused || video.ended || (video.srcObject && !video.srcObject.active);
+      if (isDead || (resumeHint && resumeHint.style.display === "flex")) {
+        restartCameraScanner(false);
+      }
+    }
+  });
+}
+
+// 🌟 解決切換分頁/跳出 App 後黑屏：生命週期自動喚醒
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    if (isScannerRunning) {
+      scannerWasActiveBeforeHidden = true;
+    }
+  } else if (document.visibilityState === "visible") {
+    if (isScannerRunning || scannerWasActiveBeforeHidden) {
+      // 延遲 350ms 等候手機系統相機資源重新就緒後自動重連
+      setTimeout(() => {
+        restartCameraScanner(true);
+      }, 350);
+    }
+  }
+});
+
+window.addEventListener("pageshow", () => {
+  if (isScannerRunning || scannerWasActiveBeforeHidden) {
+    setTimeout(() => {
+      restartCameraScanner(true);
+    }, 350);
+  }
+});
+
+window.addEventListener("focus", () => {
+  if (isScannerRunning || scannerWasActiveBeforeHidden) {
+    setTimeout(() => {
+      const video = document.querySelector("#qr-reader video");
+      if (video && (video.paused || video.ended)) {
+        restartCameraScanner(true);
+      }
+    }, 350);
+  }
+});
+
+// 🌟 背景心跳檢測：每 2 秒檢查一次視訊串流是否處於中斷/黑屏狀態，若是則自動復原
+setInterval(() => {
+  if (isScannerRunning && !isRestartingScanner && document.visibilityState === "visible") {
+    const video = document.querySelector("#qr-reader video");
+    if (video) {
+      const isPaused = video.paused;
+      const isEnded = video.ended;
+      const isDead = video.srcObject && !video.srcObject.active;
+      if (isPaused || isEnded || isDead) {
+        console.warn("相機視訊串流中斷/黑屏，執行自動喚醒...");
+        restartCameraScanner(true);
+      }
+    }
+  }
+}, 2000);
 
 // 🌟 從資料庫雲端同步歷史紀錄 (徹底解決重整資料消失、序號重複、跳號缺漏問題)
 async function syncHistoryFromDb() {

@@ -86,7 +86,12 @@
 <body>
 
   <div class="card">
-    <h1>📱 IE Chair 工站 QR Code 產生器</h1>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <h1 style="margin:0;">📱 IE Chair 工站 QR Code 產生器</h1>
+      <a href="工蓋螢幕.html" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:600; background:#eff6ff; padding:6px 14px; border-radius:8px; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:4px;">
+        🖥️ 返回工蓋螢幕主監控頁 ❯
+      </a>
+    </div>
 
     <!-- 永久固定且鎖定的網址 -->
     <div class="form-group">
@@ -132,15 +137,16 @@
       </div>
     </div>
 
-    <!-- 🏷️ 8 個工站個別生產料號設定 (各組、各站獨立) -->
+    <!-- 🏷️ 工站個別生產料號設定 (依該組流程圖動態顯示上線工站) -->
     <div class="form-group" style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #cbd5e1; margin-top:15px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
         <div>
           <label style="margin:0; font-weight:bold; font-size:15px; color:#0f172a;">
             🏷️ <span id="currentGroupLabel" style="color:#2563eb;">G02</span> 各工站生產料號設定 (各組獨立儲存)：
+            <span id="stationCountInfo" style="font-size:13px; color:#16a34a; font-weight:normal; margin-left:6px;"></span>
           </label>
           <span style="font-size:12px; color:#64748b;">
-            每個組別（G01~G12）與每個工站皆可獨立設定不同料號，切換上方組別時自動切換顯示。
+            每個組別與每個工站皆可獨立設定不同料號，會自動根據該組在「工蓋螢幕」設定之流程圖顯示上線工站。
           </span>
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -170,8 +176,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST01" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST01" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST01" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -189,8 +197,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST02" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST02" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST02" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -208,8 +218,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST03" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST03" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST03" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -227,8 +239,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST04" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST04" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST04" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -246,8 +260,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST05" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST05" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST05" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -265,8 +281,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST06" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST06" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST06" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -284,8 +302,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST07" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST07" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST07" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
 
@@ -303,8 +323,10 @@
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">零件名稱:</span>
             <input type="text" class="station-raw-name" data-station="ST08" placeholder="例如：零件5 (螺絲包)" style="padding:4px 6px; font-size:12px; flex:2; background:#fff;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; white-space:nowrap;">備料:</span>
-            <input type="number" class="station-raw-init" data-station="ST08" placeholder="10" value="10" min="0" style="padding:4px 6px; font-size:12px; width:50px; background:#fff;">
-            <span style="font-size:11px; color:#92400e;">顆</span>
+            <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+              <input type="number" class="station-raw-init" data-station="ST08" placeholder="10" value="10" min="0" style="border:none; outline:none; padding:4px 0; font-size:12px; width:36px; background:transparent; text-align:right;">
+              <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+            </div>
           </div>
         </div>
       </div>
@@ -345,16 +367,20 @@
   </div>
 
 <script>
-  // 永久固定網址常數
+  // 永久固定網址與雲端資料庫常數
   const FIXED_BASE_URL = "https://mrjohnny461-png.github.io/qr/timer.html";
-  let currentFullUrl = "";
+  const SUPABASE_URL = "https://fqbsrcbxtmagczykoesv.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
 
-  const STATIONS = ["ST01", "ST02", "ST03", "ST04", "ST05", "ST06", "ST07", "ST08"];
+  let currentFullUrl = "";
+  const ALL_STATIONS = ["ST01", "ST02", "ST03", "ST04", "ST05", "ST06", "ST07", "ST08"];
+  let STATIONS = [...ALL_STATIONS];
   const GROUPS = ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12"];
 
   const groupSelect = document.getElementById("groupSelect");
   const stationSelect = document.getElementById("stationSelect");
   const currentGroupLabel = document.getElementById("currentGroupLabel");
+  const stationCountInfo = document.getElementById("stationCountInfo");
   const lockBtn = document.getElementById("lockPartBtn");
   const lockBadge = document.getElementById("lockStatusBadge");
   const lockHint = document.getElementById("lockHintText");
@@ -419,7 +445,7 @@
   }
 
   // 綁定各工站原生零件勾選框事件
-  STATIONS.forEach(st => {
+  ALL_STATIONS.forEach(st => {
     const check = document.getElementById(`rawCheck_${st}`);
     if (check) {
       check.addEventListener("change", () => {
@@ -429,10 +455,68 @@
     }
   });
 
-  // 渲染當前選取組別的 8 站料號與原生零件設定
-  function renderCurrentGroup() {
+  // 依據組別自訂之流程圖動態同步上線工站 (例如 G02 僅有 5 個工站則只顯示與列印 5 個工站)
+  async function syncActiveStationsFromFlow(group) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}&order=station_id.asc`, {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      if (res.ok) {
+        const flows = await res.json();
+        if (Array.isArray(flows) && flows.length > 0) {
+          const activeSet = new Set();
+          flows.forEach(f => {
+            if (f.station_id) activeSet.add(f.station_id.trim());
+            if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+          });
+          const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+          activeSet.forEach(s => {
+            if (!filtered.includes(s)) filtered.push(s);
+          });
+          if (filtered.length > 0) {
+            STATIONS = filtered;
+            return;
+          }
+        }
+      }
+    } catch(e) {
+      console.warn("無法從雲端同步工站順序，將採用預設工站列表：", e);
+    }
+    STATIONS = [...ALL_STATIONS];
+  }
+
+  // 動態更新工站選單，確保僅列出目前流程中有配置的工站
+  function updateStationDropdown() {
+    const currentVal = stationSelect.value;
+    stationSelect.innerHTML = "";
+    STATIONS.forEach(st => {
+      const opt = document.createElement("option");
+      opt.value = st;
+      opt.textContent = st;
+      stationSelect.appendChild(opt);
+    });
+    if (STATIONS.includes(currentVal)) {
+      stationSelect.value = currentVal;
+    } else if (STATIONS.length > 0) {
+      stationSelect.value = STATIONS[0];
+    }
+  }
+
+  // 渲染當前選取組別之料號、原生零件設定與動態工站卡片
+  async function renderCurrentGroup() {
     activeGroup = groupSelect.value || "G02";
+    await syncActiveStationsFromFlow(activeGroup);
+    updateStationDropdown();
+
     currentGroupLabel.textContent = activeGroup;
+    if (stationCountInfo) {
+      stationCountInfo.textContent = `（流程設定為 ${STATIONS.length} 個工站：${STATIONS.join("、")}）`;
+    }
+
+    const genAllBtn = document.getElementById("genAllBtn");
+    if (genAllBtn) {
+      genAllBtn.textContent = `🖨️ 產生本組全部 ${STATIONS.length} 個工站 (列印桌牌)`;
+    }
 
     const allData = getAllGroupStationParts();
     const curParts = allData[activeGroup] || {};
@@ -441,7 +525,13 @@
     const locks = getGroupLocks();
     const isLocked = !!locks[activeGroup];
 
-    STATIONS.forEach(st => {
+    ALL_STATIONS.forEach(st => {
+      const card = document.getElementById(`partCard_${st}`);
+      const isStActive = STATIONS.includes(st);
+      if (card) {
+        card.style.display = isStActive ? "flex" : "none";
+      }
+
       const partInput = document.querySelector(`.station-part-input[data-station="${st}"]`);
       if (partInput) {
         partInput.value = curParts[st] || "";
@@ -501,7 +591,7 @@
     const selectedSt = stationSelect.value;
     const locks = getGroupLocks();
     const isLocked = !!locks[activeGroup];
-    STATIONS.forEach(st => {
+    ALL_STATIONS.forEach(st => {
       const card = document.getElementById(`partCard_${st}`);
       if (card) {
         if (st === selectedSt) {
@@ -515,10 +605,10 @@
     });
   }
 
-  // 蒐集當前畫面上輸入的 8 站料號
+  // 蒐集當前畫面上輸入的各站料號 (遍歷所有可能工站保留資料完整度)
   function collectCurrentParts() {
     const parts = {};
-    STATIONS.forEach(st => {
+    ALL_STATIONS.forEach(st => {
       const input = document.querySelector(`.station-part-input[data-station="${st}"]`);
       if (input && input.value.trim()) {
         parts[st] = input.value.trim();
@@ -527,10 +617,10 @@
     return parts;
   }
 
-  // 蒐集當前畫面上輸入的 8 站原生零件設定
+  // 蒐集當前畫面上輸入的各站原生零件設定
   function collectCurrentRawConfigs() {
     const configs = {};
-    STATIONS.forEach(st => {
+    ALL_STATIONS.forEach(st => {
       const check = document.getElementById(`rawCheck_${st}`);
       const nameInput = document.querySelector(`.station-raw-name[data-station="${st}"]`);
       const initInput = document.querySelector(`.station-raw-init[data-station="${st}"]`);
@@ -548,7 +638,7 @@
   }
 
   // 切換組別時先自動保存當前組別設定，再載入新組別
-  groupSelect.addEventListener("change", function(e) {
+  groupSelect.addEventListener("change", async function(e) {
     const oldGroup = activeGroup;
     const locks = getGroupLocks();
     if (!locks[oldGroup]) {
@@ -560,13 +650,13 @@
       allRaw[oldGroup] = collectCurrentRawConfigs();
       saveAllGroupRawConfigs(allRaw);
     }
-    renderCurrentGroup();
+    await renderCurrentGroup();
   });
 
   stationSelect.addEventListener("change", highlightSelectedStation);
 
   // 鎖定 / 解鎖當前組別
-  lockBtn.addEventListener("click", () => {
+  lockBtn.addEventListener("click", async () => {
     const locks = getGroupLocks();
     const isLocked = !!locks[activeGroup];
 
@@ -574,7 +664,7 @@
       if (confirm(`確定要解除鎖定並修改【${activeGroup}】的各工站生產料號與物料設定嗎？`)) {
         locks[activeGroup] = false;
         saveGroupLocks(locks);
-        renderCurrentGroup();
+        await renderCurrentGroup();
       }
     } else {
       const allData = getAllGroupStationParts();
@@ -587,16 +677,16 @@
 
       locks[activeGroup] = true;
       saveGroupLocks(locks);
-      renderCurrentGroup();
+      await renderCurrentGroup();
     }
   });
 
   // 快速複製當前組別設定到所有其他組別
-  document.getElementById("copyToAllGroupsBtn").addEventListener("click", () => {
+  document.getElementById("copyToAllGroupsBtn").addEventListener("click", async () => {
     const curParts = collectCurrentParts();
     const curRaw = collectCurrentRawConfigs();
 
-    if (confirm(`確定要將【${activeGroup}】的 8 站料號與原生零件設定複製給其他所有組別 (G01~G12) 嗎？\n\n這會將其他組別覆蓋為相同設定，後續仍可隨時個別調整。`)) {
+    if (confirm(`確定要將【${activeGroup}】的各站料號與原生零件設定複製給其他所有組別 (G01~G12) 嗎？\n\n這會將其他組別覆蓋為相同設定，後續仍可隨時個別調整。`)) {
       const allData = getAllGroupStationParts();
       const allRaw = getAllGroupRawConfigs();
       GROUPS.forEach(g => {
@@ -606,12 +696,12 @@
       saveAllGroupStationParts(allData);
       saveAllGroupRawConfigs(allRaw);
       alert(`✓ 已成功將【${activeGroup}】的料號與物料設定複製套用至 G01~G12 全部組別！`);
-      renderCurrentGroup();
+      await renderCurrentGroup();
     }
   });
 
   // 1. 產生單張 QR Code
-  document.getElementById("genSingleBtn").addEventListener("click", function() {
+  document.getElementById("genSingleBtn").addEventListener("click", async function() {
     const group = groupSelect.value;
     const station = stationSelect.value;
 
@@ -625,7 +715,7 @@
       saveAllGroupRawConfigs(allRaw);
       locks[group] = true;
       saveGroupLocks(locks);
-      renderCurrentGroup();
+      await renderCurrentGroup();
     }
     const partNo = (allData[group] && allData[group][station]) || "";
     const rawCfg = (allRaw[group] && allRaw[group][station]) || {};
@@ -676,8 +766,8 @@
     link.click();
   };
 
-  // 2. 產生本組全部工站桌牌
-  document.getElementById("genAllBtn").addEventListener("click", function() {
+  // 2. 產生本組全部上線工站桌牌 (動態依流程圖工站數產生)
+  document.getElementById("genAllBtn").addEventListener("click", async function() {
     const group = groupSelect.value;
     const allData = getAllGroupStationParts();
     const allRaw = getAllGroupRawConfigs();
@@ -689,7 +779,7 @@
       saveAllGroupRawConfigs(allRaw);
       locks[group] = true;
       saveGroupLocks(locks);
-      renderCurrentGroup();
+      await renderCurrentGroup();
     }
 
     const groupParts = allData[group] || {};
@@ -701,7 +791,7 @@
     batchArea.style.display = "block";
     grid.innerHTML = "";
 
-    document.getElementById("batchTitle").innerHTML = `🪑 ${group} - 全工站個別料號 QR Code 桌牌`;
+    document.getElementById("batchTitle").innerHTML = `🪑 ${group} - 全線 ${STATIONS.length} 個上線工站個別料號 QR Code 桌牌`;
 
     STATIONS.forEach(st => {
       const partNo = groupParts[st] || "";

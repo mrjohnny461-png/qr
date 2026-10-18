@@ -144,11 +144,16 @@
 
   <!-- 區塊 1：工站流程順序圖與 站前/站後 WIP 看板 -->
   <div class="card" id="flowCard">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <h2 style="margin:0;">1. 工站順序圖與在製品 (WIP) 即時看板</h2>
-      <button onclick="openFlowModal()" style="font-size:13px; color:#7c3aed; background:none; border:none; cursor:pointer; text-decoration:underline;">
-        ✏️ 修改此順序圖
-      </button>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a id="gotoQrcodeBtn" href="qrcode.html" target="_blank" style="font-size:13px; font-weight:bold; color:#2563eb; background:#eff6ff; padding:6px 12px; border-radius:8px; border:1px solid #bfdbfe; text-decoration:none; display:none; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+          🖨️ 前往【--】QR Code 桌牌與料號設定 ❯
+        </a>
+        <button onclick="openFlowModal()" style="font-size:13px; color:#7c3aed; background:none; border:none; cursor:pointer; text-decoration:underline;">
+          ✏️ 修改此順序圖
+        </button>
+      </div>
     </div>
     <div class="legend">
       <div class="legend-item"><span class="color-box" style="background:#dcfce7; border:1px solid #16a34a;"></span> 綠燈：流暢正常 (物料充足)</div>
@@ -263,8 +268,10 @@ function getStationPart(group, station) {
 function getStationRaw(group, station) {
   try {
     const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-    if (group && all[group] && all[group][station]) return all[group][station];
-    if (station === "ST04") return { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 };
+    if (group && all[group] && all[group][station]) {
+      const cfg = all[group][station];
+      if (cfg && cfg.hasRaw) return cfg;
+    }
   } catch(e) {}
   return { hasRaw: false };
 }
@@ -357,9 +364,17 @@ async function loadAll() {
 
     if (group !== "ALL") {
       document.getElementById("flowCard").style.display = "block";
+      const gotoBtn = document.getElementById("gotoQrcodeBtn");
+      if (gotoBtn) {
+        gotoBtn.href = `qrcode.html?group=${encodeURIComponent(group)}`;
+        gotoBtn.innerHTML = `🖨️ 前往【${group}】QR Code 桌牌與料號設定 ❯`;
+        gotoBtn.style.display = "inline-flex";
+      }
       await renderFlowDiagram(group);
     } else {
       document.getElementById("flowCard").style.display = "none";
+      const gotoBtn = document.getElementById("gotoQrcodeBtn");
+      if (gotoBtn) gotoBtn.style.display = "none";
     }
 
     const now = new Date().toLocaleTimeString();
@@ -417,7 +432,7 @@ async function renderFlowDiagram(group) {
     const w = wipMap[stId] || { inWip: 0, outWip: 0 };
     const rawCfg = getStationRaw(group, stId);
     const hasRaw = !!rawCfg.hasRaw;
-    const rawName = rawCfg.rawName || (stId === "ST04" ? "零件5" : "原生料");
+    const rawName = rawCfg.rawName || "原生料";
 
     // 找出所有前置來源站 (predecessors)
     const predecessors = flows
@@ -618,8 +633,24 @@ async function saveCustomFlow() {
       body: JSON.stringify(payload)
     });
 
-    alert("✓ 流程已成功儲存，順序圖已即時更新！");
     closeFlowModal();
+    const clearOld = confirm(`✓ 流程順序已成功儲存！順序圖已即時更新。\n\n💡 建議：是否要一併清空【${group}】先前的舊測試紀錄與庫存，以全新狀態開始計時？\n（點擊「確定」自動重置舊紀錄；點擊「取消」保留目前紀錄）`);
+    if (clearOld) {
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
+          method: "DELETE",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+          method: "PATCH",
+          headers: {
+            apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+        });
+      } catch(e) {}
+    }
     loadAll();
   } catch (err) {
     alert("儲存失敗：" + err.message);

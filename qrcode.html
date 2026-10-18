@@ -359,6 +359,12 @@
   const lockBadge = document.getElementById("lockStatusBadge");
   const lockHint = document.getElementById("lockHintText");
 
+  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02)
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
+  if (paramGroup && GROUPS.includes(paramGroup)) {
+    groupSelect.value = paramGroup;
+  }
   let activeGroup = groupSelect.value || "G02";
 
   // 讀取所有組別的各工站料號 { "G01": { "ST01": "..." }, "G02": { ... } }
@@ -380,7 +386,7 @@
     localStorage.setItem("ie_chair_group_station_parts", JSON.stringify(data));
   }
 
-  // 讀取所有組別各工站的原生零件設定 { "G01": { "ST04": { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 } } }
+  // 讀取所有組別各工站的原生零件設定
   function getAllGroupRawConfigs() {
     try {
       const raw = localStorage.getItem("ie_chair_group_station_raw");
@@ -388,10 +394,7 @@
     } catch(e) {}
     const data = {};
     GROUPS.forEach(g => {
-      data[g] = {
-        // 預設 ST04 為包含零件 5，其他為純半成品
-        "ST04": { hasRaw: true, rawName: "零件5 (螺絲包)", rawInit: 10 }
-      };
+      data[g] = {}; // 預設皆為純半成品，無預設綁定工站
     });
     return data;
   }
@@ -461,7 +464,7 @@
         check.disabled = isLocked;
       }
       if (nameInput) {
-        nameInput.value = stRaw.rawName || (st === "ST04" ? "零件5 (螺絲包)" : "零件5");
+        nameInput.value = stRaw.rawName || "";
         nameInput.readOnly = isLocked;
         nameInput.style.backgroundColor = isLocked ? "#e2e8f0" : "#fff";
       }

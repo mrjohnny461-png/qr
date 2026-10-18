@@ -444,13 +444,13 @@ if (!hasRawPart) {
     const stRaw = groupRaw[stationId] || {};
     if (stRaw.hasRaw) {
       hasRawPart = true;
-      rawPartName = stRaw.rawName || (stationId === "ST04" ? "零件5 (螺絲包)" : "零件5");
+      rawPartName = stRaw.rawName || "原生零件";
       rawInitCount = stRaw.rawInit !== undefined ? stRaw.rawInit : 10;
     }
   } catch (e) {}
 }
 if (hasRawPart && !rawPartName) {
-  rawPartName = (stationId === "ST04" ? "零件5 (螺絲包)" : "零件5");
+  rawPartName = "原生零件";
 }
 
 if (hasRawPart) {

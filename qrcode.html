@@ -89,7 +89,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
       <h1 style="margin:0;">📱 IE Chair 工站 QR Code 產生器</h1>
       <a href="工蓋螢幕.html" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:600; background:#eff6ff; padding:6px 14px; border-radius:8px; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:4px;">
-        🖥️ 返回工蓋螢幕主監控頁 ❯
+        🖥️ 前往主監控看板 (現場看板模式) ❯
       </a>
     </div>
 
@@ -385,11 +385,15 @@
   const lockBadge = document.getElementById("lockStatusBadge");
   const lockHint = document.getElementById("lockHintText");
 
-  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02)
+  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02)，其次讀取上次儲存之組別
   const urlParams = new URLSearchParams(window.location.search);
   const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
+  const savedGroup = localStorage.getItem("ie_chair_selected_group");
+
   if (paramGroup && GROUPS.includes(paramGroup)) {
     groupSelect.value = paramGroup;
+  } else if (savedGroup && GROUPS.includes(savedGroup)) {
+    groupSelect.value = savedGroup;
   }
   let activeGroup = groupSelect.value || "G02";
 
@@ -477,10 +481,48 @@
             STATIONS = filtered;
             return;
           }
+        } else {
+          // 🛡️ 雲端為空時，嘗試讀取本地備份
+          const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
+          if (backupRaw) {
+            try {
+              const backupFlows = JSON.parse(backupRaw);
+              if (Array.isArray(backupFlows) && backupFlows.length > 0) {
+                const activeSet = new Set();
+                backupFlows.forEach(f => {
+                  if (f.station_id) activeSet.add(f.station_id.trim());
+                  if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+                });
+                const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+                if (filtered.length > 0) {
+                  STATIONS = filtered;
+                  return;
+                }
+              }
+            } catch(e) {}
+          }
         }
       }
     } catch(e) {
-      console.warn("無法從雲端同步工站順序，將採用預設工站列表：", e);
+      console.warn("無法從雲端同步工站順序，將嘗試檢查本地備份：", e);
+      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
+      if (backupRaw) {
+        try {
+          const backupFlows = JSON.parse(backupRaw);
+          if (Array.isArray(backupFlows) && backupFlows.length > 0) {
+            const activeSet = new Set();
+            backupFlows.forEach(f => {
+              if (f.station_id) activeSet.add(f.station_id.trim());
+              if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+            });
+            const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+            if (filtered.length > 0) {
+              STATIONS = filtered;
+              return;
+            }
+          }
+        } catch(err) {}
+      }
     }
     STATIONS = [...ALL_STATIONS];
   }
@@ -650,6 +692,7 @@
       allRaw[oldGroup] = collectCurrentRawConfigs();
       saveAllGroupRawConfigs(allRaw);
     }
+    localStorage.setItem("ie_chair_selected_group", activeGroup);
     await renderCurrentGroup();
   });
 

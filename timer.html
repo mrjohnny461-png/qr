@@ -816,13 +816,28 @@ async function updateRawDb(newRaw) {
 }
 
 document.getElementById("btnPlusIn").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
-document.getElementById("btnMinusIn").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
+document.getElementById("btnMinusIn").onclick = () => {
+  if (manualBufferWip <= 0) return;
+  if (confirm(`確定要手動扣減 1 件站前在製品庫存嗎？（目前：${manualBufferWip} 件）`)) {
+    updateWipDb(manualBufferWip - 1, currentOutWip);
+  }
+};
 
 document.getElementById("btnPlusSub").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
-document.getElementById("btnMinusSub").onclick = () => updateWipDb(manualBufferWip - 1, currentOutWip);
+document.getElementById("btnMinusSub").onclick = () => {
+  if (manualBufferWip <= 0) return;
+  if (confirm(`確定要手動扣減 1 套半成品庫存嗎？（目前：${manualBufferWip} 套）`)) {
+    updateWipDb(manualBufferWip - 1, currentOutWip);
+  }
+};
 
 document.getElementById("btnPlusRaw").onclick = () => updateRawDb(rawPartStock + 1);
-document.getElementById("btnMinusRaw").onclick = () => updateRawDb(rawPartStock - 1);
+document.getElementById("btnMinusRaw").onclick = () => {
+  if (rawPartStock <= 0) return;
+  if (confirm(`確定要手動扣減 1 顆原生零件庫存嗎？（目前：${rawPartStock} 顆）`)) {
+    updateRawDb(rawPartStock - 1);
+  }
+};
 
 // 背景雙向即時同步 (每 2 秒輪詢前置站點庫存與本站歷史紀錄)
 async function autoSyncLive() {

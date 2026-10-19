@@ -135,10 +135,18 @@
       </select>
     </div>
 
-    <button id="openFlowEditorBtn" class="btn-edit" style="margin-left:auto;">
-      🛠️ 自訂本組工站順序
-    </button>
-    <button id="deleteAllBtn" class="btn-danger">🗑️ 清空紀錄與庫存歸零</button>
+    <div id="adminControlsArea" style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap;">
+      <button id="adminToggleBtn" onclick="toggleAdmin()" style="padding:6px 14px; font-size:13px; font-weight:bold; border-radius:8px; border:1px solid #cbd5e1; background:#f8fafc; color:#334155; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;" title="點擊解鎖管理員以啟用清空與自訂功能">
+        🔒 現場看板模式 (點擊解鎖管理)
+      </button>
+      <button id="changePinBtn" onclick="changeAdminPin()" style="display:none; padding:6px 10px; font-size:12px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer;" title="變更管理員密碼">
+        ⚙️ 改密碼
+      </button>
+      <button id="openFlowEditorBtn" class="btn-edit" style="display:none;">
+        🛠️ 自訂本組工站順序
+      </button>
+      <button id="deleteAllBtn" class="btn-danger" style="display:none;">🗑️ 清空紀錄與庫存歸零</button>
+    </div>
     <span id="status">即時更新中</span>
   </div>
 
@@ -150,7 +158,7 @@
         <a id="gotoQrcodeBtn" href="qrcode.html" target="_blank" style="font-size:13px; font-weight:bold; color:#2563eb; background:#eff6ff; padding:6px 12px; border-radius:8px; border:1px solid #bfdbfe; text-decoration:none; display:none; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
           🖨️ 前往【--】QR Code 桌牌與料號設定 ❯
         </a>
-        <button onclick="openFlowModal()" style="font-size:13px; color:#7c3aed; background:none; border:none; cursor:pointer; text-decoration:underline;">
+        <button id="editFlowInCardBtn" onclick="openFlowModal()" style="display:none; font-size:13px; color:#7c3aed; background:none; border:none; cursor:pointer; text-decoration:underline;">
           ✏️ 修改此順序圖
         </button>
       </div>
@@ -217,7 +225,7 @@
           <th>作業秒數</th>
           <th>完工累計</th>
           <th>狀態</th>
-          <th>操作</th>
+          <th class="admin-only" style="display:none;">操作</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -294,11 +302,27 @@ function getStationRaw(group, station) {
 }
 
 window.addEventListener("load", () => {
+  // 🌟 讀取上次記憶之組別 (優先順序: URL 參數 > localStorage > 預設 G02)
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
+  const savedGroup = localStorage.getItem("ie_chair_selected_group");
+  const grpSelect = document.getElementById("groupSelect");
+
+  if (paramGroup && Array.from(grpSelect.options).some(o => o.value === paramGroup)) {
+    grpSelect.value = paramGroup;
+  } else if (savedGroup && Array.from(grpSelect.options).some(o => o.value === savedGroup)) {
+    grpSelect.value = savedGroup;
+  }
+
+  updateAdminUI();
   loadAll();
   startAutoRefresh();
 });
 
-document.getElementById("groupSelect").onchange = loadAll;
+document.getElementById("groupSelect").onchange = function() {
+  localStorage.setItem("ie_chair_selected_group", this.value);
+  loadAll();
+};
 document.getElementById("loadBtn").onclick = loadAll;
 
 function startAutoRefresh() {
@@ -318,8 +342,125 @@ document.getElementById("refreshIntervalSelect").onchange = function() {
   }
 };
 
-// 一鍵清空全部數據與重置 WIP
+// 🔐 權限管理系統 (預設為「現場看板唯讀模式」，解鎖後切換為「管理員模式」)
+const ADMIN_PIN_KEY = "ie_chair_admin_pin";
+const DEFAULT_PIN = "1688";
+let isAdminLoggedIn = false;
+let autoLockTimer = null;
+
+function getAdminPin() {
+  return localStorage.getItem(ADMIN_PIN_KEY) || DEFAULT_PIN;
+}
+
+function updateAdminUI() {
+  const adminToggleBtn = document.getElementById("adminToggleBtn");
+  const changePinBtn = document.getElementById("changePinBtn");
+  const openFlowEditorBtn = document.getElementById("openFlowEditorBtn");
+  const deleteAllBtn = document.getElementById("deleteAllBtn");
+  const editFlowInCardBtn = document.getElementById("editFlowInCardBtn");
+  const adminTh = document.querySelector("#dataTable thead th.admin-only");
+  const adminTds = document.querySelectorAll("#dataTable tbody td.admin-only");
+
+  if (isAdminLoggedIn) {
+    if (adminToggleBtn) {
+      adminToggleBtn.innerHTML = "🔓 管理員已授權 (點擊鎖定)";
+      adminToggleBtn.style.background = "#eff6ff";
+      adminToggleBtn.style.color = "#1d4ed8";
+      adminToggleBtn.style.borderColor = "#93c5fd";
+    }
+    if (changePinBtn) changePinBtn.style.display = "inline-flex";
+    if (openFlowEditorBtn) openFlowEditorBtn.style.display = "inline-flex";
+    if (deleteAllBtn) deleteAllBtn.style.display = "inline-flex";
+    if (editFlowInCardBtn) editFlowInCardBtn.style.display = "inline-flex";
+    if (adminTh) adminTh.style.display = "";
+    adminTds.forEach(td => td.style.display = "");
+  } else {
+    if (adminToggleBtn) {
+      adminToggleBtn.innerHTML = "🔒 現場看板模式 (點擊解鎖管理)";
+      adminToggleBtn.style.background = "#f8fafc";
+      adminToggleBtn.style.color = "#334155";
+      adminToggleBtn.style.borderColor = "#cbd5e1";
+    }
+    if (changePinBtn) changePinBtn.style.display = "none";
+    if (openFlowEditorBtn) openFlowEditorBtn.style.display = "none";
+    if (deleteAllBtn) deleteAllBtn.style.display = "none";
+    if (editFlowInCardBtn) editFlowInCardBtn.style.display = "none";
+    if (adminTh) adminTh.style.display = "none";
+    adminTds.forEach(td => td.style.display = "none");
+  }
+}
+
+function resetAutoLock() {
+  if (autoLockTimer) clearTimeout(autoLockTimer);
+  if (isAdminLoggedIn) {
+    // 15 分鐘無操作自動鎖定為現場看板唯讀模式
+    autoLockTimer = setTimeout(() => {
+      lockAdmin();
+      alert("⏱️ 管理員已閒置超過 15 分鐘，已自動切換回【現場看板唯讀模式】！");
+    }, 15 * 60 * 1000);
+  }
+}
+
+function unlockAdmin() {
+  const pin = prompt("🔐 請輸入管理員密碼（預設密碼為 1688）：");
+  if (pin === null) return;
+  if (pin.trim() === getAdminPin()) {
+    isAdminLoggedIn = true;
+    updateAdminUI();
+    resetAutoLock();
+    alert("✓ 管理員權限已解鎖！現已開放工站流程順序自訂、紀錄刪除與重置功能。");
+  } else {
+    alert("❌ 密碼錯誤，存取已被拒絕！");
+  }
+}
+
+function lockAdmin() {
+  isAdminLoggedIn = false;
+  if (autoLockTimer) clearTimeout(autoLockTimer);
+  updateAdminUI();
+}
+
+function toggleAdmin() {
+  if (isAdminLoggedIn) {
+    lockAdmin();
+  } else {
+    unlockAdmin();
+  }
+}
+
+function changeAdminPin() {
+  if (!isAdminLoggedIn) {
+    alert("請先解鎖管理員模式！");
+    return;
+  }
+  const oldPin = prompt("請輸入目前的管理員密碼：");
+  if (oldPin === null) return;
+  if (oldPin.trim() !== getAdminPin()) {
+    alert("❌ 舊密碼不正確！");
+    return;
+  }
+  const newPin = prompt("請輸入新的管理員密碼 (至少 4 碼)：");
+  if (!newPin || newPin.trim().length < 4) {
+    alert("密碼長度至少需 4 碼！");
+    return;
+  }
+  const confirmPin = prompt("請再次確認輸入新的管理員密碼：");
+  if (newPin.trim() !== (confirmPin ? confirmPin.trim() : "")) {
+    alert("兩次輸入的密碼不一致！");
+    return;
+  }
+  localStorage.setItem(ADMIN_PIN_KEY, newPin.trim());
+  alert("✓ 管理員密碼修改成功！新密碼已生效，請妥善保存。");
+}
+
+// 一鍵清空全部數據與重置 WIP (需管理員權限)
 document.getElementById("deleteAllBtn").onclick = async () => {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：現場看板模式下禁止執行清空重置操作！請先解鎖管理員。");
+    return;
+  }
+  resetAutoLock();
+
   const group = document.getElementById("groupSelect").value;
   if (group === "ALL") {
     alert("請先選擇特定的單一組別（例如 G02）再執行清空！");
@@ -332,19 +473,38 @@ document.getElementById("deleteAllBtn").onclick = async () => {
   try {
     document.getElementById("status").textContent = "正在清空與重置中...";
 
-    await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
-      method: "DELETE",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-    });
+    // 嘗試調用後端安全 RPC (若 Supabase 已建立函數)
+    const pin = getAdminPin();
+    let rpcHandled = false;
+    try {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_reset_group_data`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ p_group_id: group, p_admin_pin: pin })
+      });
+      if (rpcRes.ok) {
+        rpcHandled = true;
+      }
+    } catch(e) {}
 
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
-      method: "PATCH",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
-    });
+    if (!rpcHandled) {
+      await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+      });
+    }
 
     alert(`✓ 【${group}】的生產紀錄已全數清空，庫存已全部歸零重置！各工站作業員可開始新一輪競賽。`);
     loadAll();
@@ -418,6 +578,26 @@ async function renderFlowDiagram(group) {
   const wips = await wipRes.json();
 
   if (flows.length === 0) {
+    // 🛡️ 檢查本地是否有此組流程備份，若有則自動重送雲端防護
+    const localBackupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
+    if (localBackupRaw) {
+      try {
+        const localFlows = JSON.parse(localBackupRaw);
+        if (Array.isArray(localFlows) && localFlows.length > 0) {
+          console.warn(`偵測到 ${group} 雲端無資料但有本地備份，自動回補雲端...`);
+          await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(localFlows)
+          });
+          return renderFlowDiagram(group);
+        }
+      } catch(e) {}
+    }
+
     container.innerHTML = `
       <div style="text-align:center; padding: 20px;">
         <p style="color:#64748b;">本組（${group}）尚未設定工站順序流程。</p>
@@ -561,6 +741,11 @@ async function renderFlowDiagram(group) {
 document.getElementById("openFlowEditorBtn").onclick = openFlowModal;
 
 async function openFlowModal() {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：修改工站順序需管理員權限！請先點擊上方「🔒 現場看板模式 (點擊解鎖管理)」。");
+    return;
+  }
+  resetAutoLock();
   const group = document.getElementById("groupSelect").value;
   if (group === "ALL") {
     alert("請先選擇特定的單一組別（例如 G02）再自訂工站流程！");
@@ -579,7 +764,20 @@ async function openFlowModal() {
   if (data.length > 0) {
     data.forEach(item => addFlowRow(item.station_id, item.next_station_id, false));
   } else {
-    presetStandardFlow(false);
+    const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
+    let restored = false;
+    if (backupRaw) {
+      try {
+        const backupData = JSON.parse(backupRaw);
+        if (Array.isArray(backupData) && backupData.length > 0) {
+          backupData.forEach(item => addFlowRow(item.station_id, item.next_station_id, false));
+          restored = true;
+        }
+      } catch(e) {}
+    }
+    if (!restored) {
+      presetStandardFlow(false);
+    }
   }
 
   // 依上方流程圖有幾組工站，下方零件選擇就動態顯示幾組
@@ -762,12 +960,15 @@ async function saveCustomFlow() {
   localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(allRaw));
 
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}`, {
+    // 🛡️ 同步寫入本地備份 (即使無網路或隔天開啟也能立即可用)
+    localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(payload));
+
+    const delRes = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
       method: "DELETE",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     });
 
-    await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+    const postRes = await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
       method: "POST",
       headers: {
         apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
@@ -775,6 +976,11 @@ async function saveCustomFlow() {
       },
       body: JSON.stringify(payload)
     });
+
+    if (!postRes.ok) {
+      const errText = await postRes.text();
+      throw new Error(`雲端寫入失敗 (${postRes.status}): ${errText}`);
+    }
 
     closeFlowModal();
     const clearOld = confirm(`✓ 流程順序已成功儲存！順序圖已即時更新。\n\n💡 建議：是否要一併清空【${group}】先前的舊測試紀錄與庫存，以全新狀態開始計時？\n（點擊「確定」自動重置舊紀錄；點擊「取消」保留目前紀錄）`);
@@ -796,7 +1002,7 @@ async function saveCustomFlow() {
     }
     loadAll();
   } catch (err) {
-    alert("儲存失敗：" + err.message);
+    alert("儲存失敗：" + err.message + "\n（但已為您留存本地備份，請檢查網路連線後再次點擊儲存）");
   }
 }
 
@@ -849,6 +1055,8 @@ function showTable(data) {
     });
 
     const actionTd = document.createElement("td");
+    actionTd.className = "admin-only";
+    actionTd.style.display = isAdminLoggedIn ? "" : "none";
     const delBtn = document.createElement("button");
     delBtn.textContent = "刪除";
     delBtn.className = "btn-danger";
@@ -861,11 +1069,19 @@ function showTable(data) {
 }
 
 async function deleteRecord(id) {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：現場看板模式下禁止刪除資料！請先解鎖管理員。");
+    return;
+  }
+  resetAutoLock();
   if (!confirm(`確定要刪除 ID: ${id} 嗎？`)) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${id}`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/event?id=eq.${id}`, {
     method: "DELETE",
     headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
   });
+  if (!res.ok) {
+    alert("刪除失敗：" + res.statusText);
+  }
   loadAll();
 }
 

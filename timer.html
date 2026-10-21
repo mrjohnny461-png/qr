@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
@@ -451,12 +451,26 @@ let hasRawPart = urlParams.get("has_raw") === "1" || urlParams.get("has_raw") ==
 let rawPartName = (urlParams.get("raw_name") || "").trim();
 let rawInitCount = parseInt(urlParams.get("raw_init") || "0", 10);
 
+// 📦 取得前置半成品初始備料 (主要用於下游工站)
+let subInitCount = parseInt(urlParams.get("sub_init") || "", 10);
+if (isNaN(subInitCount)) {
+  try {
+    const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+    const groupRaw = allRaw[groupId] || {};
+    const stRaw = groupRaw[stationId] || {};
+    if (stRaw.subInit !== undefined && stRaw.subInit !== null) {
+      subInitCount = stRaw.subInit;
+    }
+  } catch (e) {}
+}
+if (isNaN(subInitCount)) subInitCount = 4;
+
 if (!hasRawPart) {
   try {
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
     const groupRaw = allRaw[groupId] || {};
     const stRaw = groupRaw[stationId] || {};
-    if (stRaw.hasRaw) {
+    if (stRaw.hasRaw || (stRaw.rawInit && stRaw.rawInit > 0)) {
       hasRawPart = true;
       rawPartName = stRaw.rawName || "";
       rawInitCount = stRaw.rawInit !== undefined ? stRaw.rawInit : 0;
@@ -464,12 +478,13 @@ if (!hasRawPart) {
   } catch (e) {}
 }
 
-if (hasRawPart && rawPartName) {
+if (hasRawPart) {
   const customBadge = document.getElementById("customPartBadge");
   const customText = document.getElementById("customPartText");
   if (customBadge && customText) {
     customBadge.style.display = "block";
-    customText.textContent = `${rawPartName} (初始備料: ${rawInitCount} 件)`;
+    const displayName = rawPartName || "站前可用物料";
+    customText.textContent = `${displayName} (初始備料: ${rawInitCount} 件)`;
   }
 }
 
@@ -647,8 +662,17 @@ async function fetchWipData() {
     wipRecordId = data[0].id;
     manualBufferWip = data[0].input_wip || 0;
     currentOutWip = data[0].output_wip || 0;
+    // 若為後續工站且尚未開工 (currentOutWip === 0) 且 input_wip === 0，自動以 subInitCount 賦值
+    if (!isRootStation && manualBufferWip === 0 && currentOutWip === 0 && subInitCount > 0) {
+      manualBufferWip = subInitCount;
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: subInitCount, updated_at: new Date().toISOString() })
+      });
+    }
   } else {
-    const initialInput = (isRootStation && hasRawPart) ? rawInitCount : 0;
+    const initialInput = isRootStation ? 0 : (subInitCount || 4);
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
       method: "POST",
       headers: {
@@ -693,17 +717,18 @@ async function fetchWipData() {
 // 🌟 核心計算：萬能齊套約束（BOM 1:1）計算
 async function computeKitting() {
   if (isRootStation || feederStations.length === 0) {
-    kitCount = hasRawPart ? manualBufferWip : 9999;
-    window.currentTotalSub = kitCount;
-    const becameReady = (prevKitCount !== null && prevKitCount === 0 && kitCount > 0 && !isWorking);
+    kitCount = 9999;
+    window.currentTotalSub = 9999;
+    const becameReady = (prevKitCount !== null && prevKitCount === 0 && !isWorking);
     prevKitCount = kitCount;
     if (becameReady) {
       alertMaterialReady();
-      showScanBanner("🔔 站前備料充足！請掃描 QR Code 開始作業！", "success", 4000);
+      showScanBanner("🔔 起始工站原料充足！請掃描 QR Code 開始作業！", "success", 4000);
     }
     refreshUiNumbers();
     return;
   }
+
 
   // 抓取全組 station_wip
   const res = await fetch(
@@ -782,9 +807,10 @@ function refreshUiNumbers() {
     const totalSub = window.currentTotalSub ?? (manualBufferWip);
     document.getElementById("mixedKitCountText").textContent = kitCount;
     document.getElementById("mixedKitFormulaText").textContent = `min(組件 ${totalSub}套, 零件 ${rawPartStock}顆)`;
-    document.getElementById("mixedRawTitle").innerHTML = `📦 現場原生料`;
-    document.getElementById("mixedRawSubtitle").textContent = `${rawPartName} 料盒庫存 (顆)`;
-    document.getElementById("manualHintText").innerHTML = `💡 提示：本站需組裝【前置組件】＋【${rawPartName}】。可點擊 [+] [-] 分別調整半成品備料與零件庫存。每次完工兩者皆自動扣減 1 件。`;
+    const rName = rawPartName || "站前可用物料";
+    document.getElementById("mixedRawTitle").innerHTML = `📦 站前可用物料`;
+    document.getElementById("mixedRawSubtitle").textContent = `${rName} 料盒庫存 (顆)`;
+    document.getElementById("manualHintText").innerHTML = `💡 提示：本站需組裝【前置組件】＋【${rName}】。可點擊 [+] [-] 分別調整半成品備料與零件庫存。每次完工兩者皆自動扣減 1 件。`;
   } else {
     document.getElementById("normalWipGrid").style.display = "grid";
     document.getElementById("mixedWipGrid").style.display = "none";
@@ -792,9 +818,9 @@ function refreshUiNumbers() {
     if (isRootStation) {
       const inTitle = document.getElementById("inTitle");
       const inSub = document.getElementById("inSubtitle");
-      if (inTitle) inTitle.textContent = "📥 站前可用料";
-      if (inSub) inSub.textContent = "原料備料 (件)";
-      document.getElementById("wipInText").textContent = manualBufferWip;
+      if (inTitle) inTitle.textContent = "📥 站前原料";
+      if (inSub) inSub.textContent = "原料狀態";
+      document.getElementById("wipInText").innerHTML = "<span style='color:#16a34a; font-size:24px; font-weight:bold;'>無限 ∞</span>";
     } else {
       const inTitle = document.getElementById("inTitle");
       const inSub = document.getElementById("inSubtitle");
@@ -845,14 +871,10 @@ function refreshUiNumbers() {
   }
 
   // 1. 若為起點工站 (前無工作站)
+  // 1. 若為起點工站 (前無工作站，原料無限供應)
   if (isRootStation) {
-    if (hasRawPart && manualBufferWip <= 0) {
-      disableStartButton(`⛔ 站前原料不足 (0 件)`);
-      showMsg(`⚠️ 原料庫存為 0，請點擊 [+] 領料後再掃碼開工！`, "#dc2626");
-    } else {
-      enableStartButton("📷 請掃描 QR Code 開工");
-      showMsg("🟢 第一站（原料直接投放）：不受前站限制，請對準 QR Code 掃描開工！", "#10b981");
-    }
+    enableStartButton("📷 請掃描 QR Code 開工");
+    showMsg("🟢 起始工站（原料無限供應）：隨時可開工，請對準 QR Code 掃描！", "#10b981");
     return;
   }
 
@@ -1205,14 +1227,6 @@ async function handleStartWork(source = "SCAN") {
     return;
   }
 
-  // 起點站 0 庫存開工防呆
-  if (isRootStation && hasRawPart && manualBufferWip <= 0) {
-    playAudioFeedback("WARNING");
-    const tip = `⛔ 站前原料【${rawPartName || '組件'}】庫存為 0，請點擊 [+] 領料後再掃碼開工！`;
-    showMsg(tip, "#dc2626");
-    showScanBanner(tip, "error", 3500);
-    return;
-  }
 
   // 下游工站缺料防呆
   if (!isRootStation && kitCount <= 0) {
@@ -1268,7 +1282,7 @@ async function handleFinishWork(source = "MANUAL") {
 
   try {
     // 1. 本站完工數 + 1；若現場預發半成品組件備料大於 0，完工實體扣減 1 件 (input_wip - 1)
-    const nextIn = Math.max(0, manualBufferWip - 1);
+    const nextIn = isRootStation ? 0 : Math.max(0, manualBufferWip - 1);
     await updateWipDb(nextIn, nextOut);
 
     // 2. 若為混合工站，扣減 1 顆原生零件 (rawPartStock - 1)

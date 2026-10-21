@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
@@ -280,7 +280,7 @@
       <div style="margin-top:18px; padding:12px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:6px;">
           <div style="font-weight:bold; color:#92400e; font-size:14px;">
-            📦 各工站額外物料與起始備料設定：
+            📦 各工站站前可用物料與初始備料設定：
           </div>
           <span id="modalStationCountBadge" style="font-size:12px; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; padding:2px 8px; border-radius:12px; font-weight:bold;"></span>
         </div>
@@ -329,7 +329,7 @@ function getStationRaw(group, station) {
     const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
     if (group && all[group] && all[group][station]) {
       const cfg = all[group][station];
-      if (cfg && cfg.hasRaw) return cfg;
+      if (cfg && (cfg.hasRaw || (cfg.rawInit && cfg.rawInit > 0))) return cfg;
     }
   } catch(e) {}
   return { hasRaw: false };
@@ -358,6 +358,30 @@ document.getElementById("groupSelect").onchange = function() {
   loadAll();
 };
 document.getElementById("loadBtn").onclick = loadAll;
+
+// ⚡ 跨分頁即時動態同步 (當在 qrcode.html 修改料號或站前可用物料設定時，即時更新螢幕與彈窗)
+window.addEventListener("storage", function(e) {
+  if (e.key === "ie_chair_group_station_raw" || e.key === "ie_chair_group_station_parts" || e.key === "ie_chair_selected_group" || (e.key && e.key.startsWith("ie_chair_flow_backup_"))) {
+    loadAll();
+    const modal = document.getElementById("flowModal");
+    if (modal && modal.style.display !== "none") {
+      const grp = document.getElementById("groupSelect").value;
+      const rawContainer = document.getElementById("modalRawConfigContainer");
+      if (rawContainer) rawContainer.innerHTML = "";
+      refreshModalRawConfigs(grp);
+    }
+  }
+});
+window.addEventListener("focus", function() {
+  loadAll();
+  const modal = document.getElementById("flowModal");
+  if (modal && modal.style.display !== "none") {
+    const grp = document.getElementById("groupSelect").value;
+    const rawContainer = document.getElementById("modalRawConfigContainer");
+    if (rawContainer) rawContainer.innerHTML = "";
+    refreshModalRawConfigs(grp);
+  }
+});
 
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
@@ -801,13 +825,19 @@ async function renderFlowDiagram(group) {
       .filter(Boolean);
 
     // 1. 計算【站前可用量 / 齊套數】
-    let inQty = w.inWip;
+    const isRoot = predecessors.length === 0;
     const isMerge = predecessors.length > 1;
-
+    let inQty = 0;
     let feederKit = 0;
-    let totalSub = w.inWip;
+    const manualSubBuffer = (w.inWip !== undefined && w.inWip > 0)
+      ? w.inWip
+      : ((w.outWip === 0 && rawCfg.subInit) ? rawCfg.subInit : 0);
+    let totalSub = manualSubBuffer;
     let rawStock = 0;
-    if (predecessors.length > 0) {
+    if (isRoot) {
+      inQty = 9999;
+      totalSub = 9999;
+    } else {
       let minAvail = 999999;
       predecessors.forEach(p => {
         const pOut = wipMap[p]?.outWip || 0;
@@ -815,7 +845,7 @@ async function renderFlowDiagram(group) {
         if (avail < minAvail) minAvail = avail;
       });
       feederKit = minAvail === 999999 ? 0 : minAvail;
-      totalSub = feederKit + w.inWip;
+      totalSub = feederKit + manualSubBuffer;
       if (hasRaw && rawName) {
         rawStock = (wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined)
           ? wipMap[stId + '_RAW'].inWip
@@ -824,8 +854,6 @@ async function renderFlowDiagram(group) {
       } else {
         inQty = totalSub;
       }
-    } else {
-      inQty = w.inWip;
     }
 
     // 2. 計算【站後在庫量】: 本站完工 - 下游站完工消耗 (若無下游站則為總成品數)
@@ -843,12 +871,12 @@ async function renderFlowDiagram(group) {
 
     // 3. 節點標籤呈現
     let inText = "";
-    if (predecessors.length === 0) {
-      inText = (hasRaw && rawName) ? `📥 ${rawName}: ${w.inWip}件` : `📥 站前可用料: ${w.inWip}件`;
+    if (isRoot) {
+      inText = "📥 原料: 無限供應";
     } else if (hasRaw) {
       inText = (hasRaw && rawName) ? `📥 半成品: ${totalSub}套 ｜ ${rawName}: ${rawStock}件 ➔ 可開工: ${inQty}套` : `📥 半成品: ${totalSub}套 ➔ 可開工: ${inQty}套`;
     } else {
-      inText = `📥 前置半成品: ${inQty}${isMerge ? '套' : '件'}`;
+      inText = `📥 半成品: ${totalSub}${isMerge ? '套' : '件'} ➔ 可開工: ${inQty}${isMerge ? '套' : '件'}`;
     }
 
     let outText = "";
@@ -872,6 +900,8 @@ async function renderFlowDiagram(group) {
     // 4. 顏色預警邏輯 (嚴格符合圖例規範)：
     if (isBottleneck) {
       styles.push(`style ${stId} fill:#fee2e2,stroke:#dc2626,stroke-width:4px;`); // 🚨 紅燈 (瓶頸站，Cycle Time 最大值)
+    } else if (isRoot) {
+      styles.push(`style ${stId} fill:#dcfce7,stroke:#16a34a,stroke-width:2px;`); // 🟢 綠燈 (起始工站原料無限充足)
     } else if (inQty === 0) {
       styles.push(`style ${stId} fill:#fef9c3,stroke:#ca8a04,stroke-width:2px;`); // 黃燈 (物料缺料飢餓，可開工為0)
     } else {
@@ -912,6 +942,8 @@ async function openFlowModal() {
   document.getElementById("flowModal").style.display = "block";
   const container = document.getElementById("flowRowsContainer");
   container.innerHTML = "<div style='color:#64748b;'>載入現有順序...</div>";
+  const rawContainer = document.getElementById("modalRawConfigContainer");
+  if (rawContainer) rawContainer.innerHTML = "";
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}&order=station_id.asc`, {
     headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
@@ -969,8 +1001,21 @@ function refreshModalRawConfigs(group) {
   const rawContainer = document.getElementById("modalRawConfigContainer");
   if (!rawContainer) return;
 
+  const flowRows = document.querySelectorAll("#flowRowsContainer .flow-row");
+  const flowPairs = [];
+  flowRows.forEach(r => {
+    const from = (r.querySelector(".from-st")?.value || "").trim();
+    const to = (r.querySelector(".to-st")?.value || "").trim();
+    if (from && to) flowPairs.push({ from, to });
+  });
+
   // 1. 暫存使用者在彈窗中即時填寫的資料，避免上方加減工站時重繪遺失
   const tempValues = {};
+  rawContainer.querySelectorAll(".modal-sub-init").forEach(inp => {
+    const st = inp.dataset.station;
+    if (!tempValues[st]) tempValues[st] = {};
+    tempValues[st].subInit = inp.value !== "" ? parseInt(inp.value, 10) : 0;
+  });
   rawContainer.querySelectorAll(".modal-raw-check").forEach(chk => {
     const st = chk.dataset.station;
     const isChecked = chk.checked;
@@ -998,37 +1043,64 @@ function refreshModalRawConfigs(group) {
   rawContainer.innerHTML = "";
 
   activeStations.forEach(st => {
+    const preds = flowPairs.filter(p => p.to === st).map(p => p.from);
+    const isRoot = preds.length === 0;
     const savedCfg = tempValues[st] || groupRaw[st] || {};
-    const hasRaw = !!savedCfg.hasRaw;
+    const hasRaw = !!(savedCfg.hasRaw || (savedCfg.rawInit && savedCfg.rawInit > 0));
     const rawName = (savedCfg.rawName !== undefined && savedCfg.rawName !== null) ? savedCfg.rawName : "";
     const rawInit = (savedCfg.rawInit !== undefined && savedCfg.rawInit !== null) ? savedCfg.rawInit : "";
 
     const div = document.createElement("div");
-    div.style.cssText = "background:#fff; border:1px solid #fcd34d; border-radius:8px; padding:8px 12px; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box;";
-    div.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <input type="checkbox" id="modalRawCheck_${st}" class="modal-raw-check" data-station="${st}" ${hasRaw ? "checked" : ""} style="cursor:pointer; width:16px; height:16px; margin:0;">
-        <label for="modalRawCheck_${st}" style="font-weight:bold; color:#1e293b; font-size:13px; cursor:pointer; margin:0;">
-          ${st} 包含現場物料投料
-        </label>
-      </div>
-      <div id="modalRawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; align-items:center; gap:6px; margin-top:8px; font-size:12px; flex-wrap:wrap;">
-        <span style="color:#92400e; font-weight:bold; white-space:nowrap;">名稱:</span>
-        <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="自訂名稱 (選填，如:螺絲)" style="padding:4px 8px; font-size:12px; flex:1; min-width:70px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;">
-        <span style="color:#92400e; font-weight:bold; white-space:nowrap;">備料:</span>
-        <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
-          <input type="number" id="modalRawInit_${st}" value="${rawInit}" min="0" style="border:none; outline:none; width:38px; padding:4px 0; font-size:12px; text-align:right;">
-          <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">顆</span>
+    if (isRoot) {
+      div.style.cssText = "background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; box-sizing:border-box;";
+      div.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-weight:bold; color:#166534; font-size:14px;">🏁 ${st} 起始工站</span>
+          <span style="font-size:12px; color:#15803d; background:#dcfce7; padding:2px 8px; border-radius:6px; font-weight:600;">🟢 原料無限供應（常駐充足，隨時可開工）</span>
         </div>
-      </div>
-    `;
-    rawContainer.appendChild(div);
+        <span style="background:#bbf7d0; color:#14532d; font-size:11px; font-weight:bold; padding:3px 10px; border-radius:12px; border:1px solid #86efac; white-space:nowrap;">原料無限 ∞</span>
+      `;
+    } else {
+      const subInitVal = (savedCfg.subInit !== undefined && savedCfg.subInit !== null) ? savedCfg.subInit : 4;
+      div.style.cssText = "background:#fff; border:1px solid #fcd34d; border-radius:8px; padding:10px 14px; display:flex; flex-direction:column; gap:8px; box-sizing:border-box;";
+      div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:bold; color:#1e293b; font-size:13px;">🧩 ${st} 後續工站</span>
+          <span style="font-size:11px; color:#b45309; background:#fef3c7; padding:2px 8px; border-radius:4px; font-weight:bold; border:1px solid #fde68a;">需前置工站：${preds.join(" + ")}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; background:#fffbeb; padding:6px 10px; border-radius:6px; border:1px solid #fef08a; flex-wrap:wrap;">
+          <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 強制設定前置半成品備料：</span>
+          <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
+            <input type="number" id="modalSubInit_${st}" class="modal-sub-init" data-station="${st}" value="${subInitVal}" min="0" placeholder="0" style="border:none; outline:none; width:45px; padding:4px 0; font-size:13px; text-align:right; font-weight:bold; color:#1e40af;">
+            <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">套</span>
+          </div>
+          <span style="font-size:11px; color:#64748b;">(開局桌上備料，做 1 件扣 1 套)</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="modalRawCheck_${st}" class="modal-raw-check" data-station="${st}" ${hasRaw ? "checked" : ""} style="cursor:pointer; width:14px; height:14px; margin:0;">
+          <label for="modalRawCheck_${st}" style="font-size:12px; color:#475569; cursor:pointer; margin:0; font-weight:600;">
+            ＋ 附加站前專屬零件 (選填，如螺絲料盒)
+          </label>
+        </div>
+        <div id="modalRawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; align-items:center; gap:6px; margin-left:20px; font-size:12px; flex-wrap:wrap; background:#f8fafc; padding:6px 10px; border-radius:6px; border:1px solid #e2e8f0;">
+          <span style="color:#64748b; font-weight:bold; white-space:nowrap;">零件名稱:</span>
+          <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="自訂名稱 (如:螺絲)" style="padding:4px 8px; font-size:12px; flex:1; min-width:80px; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+          <span style="color:#64748b; font-weight:bold; white-space:nowrap;">備料:</span>
+          <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:0 4px; box-sizing:border-box;">
+            <input type="number" id="modalRawInit_${st}" value="${rawInit}" min="0" style="border:none; outline:none; width:36px; padding:3px 0; font-size:12px; text-align:right;">
+            <span style="font-size:11px; font-weight:bold; color:#64748b; margin-left:2px; white-space:nowrap;">顆</span>
+          </div>
+        </div>
+      `;
+      const chk = div.querySelector(`#modalRawCheck_${st}`);
+      const box = div.querySelector(`#modalRawBox_${st}`);
+      if (chk && box) { chk.onchange = function() { box.style.display = this.checked ? "flex" : "none";
 
-    const chk = div.querySelector(`#modalRawCheck_${st}`);
-    const box = div.querySelector(`#modalRawBox_${st}`);
-    chk.onchange = function() {
-      box.style.display = this.checked ? "flex" : "none";
-    };
+    
+        };
+      }
+    }
+    rawContainer.appendChild(div);
   });
 }
 
@@ -1096,23 +1168,31 @@ async function saveCustomFlow() {
     });
   });
 
-  // 收集並保存原生零件投料設定
+  // 收集並保存原生零件投料設定與強制前置半成品初始備料 (subInit)
   const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
   const newGroupRaw = allRaw[group] || {};
   const activeStations = getStationsFromFlowModal();
   activeStations.forEach(st => {
-    const chk = document.getElementById(`modalRawCheck_${st}`);
-    if (chk && chk.checked) {
-      const nameInput = document.getElementById(`modalRawName_${st}`);
-      const initInput = document.getElementById(`modalRawInit_${st}`);
-      newGroupRaw[st] = {
-        hasRaw: !!(nameInput && nameInput.value.trim()),
-        rawName: (nameInput ? nameInput.value.trim() : ""),
-        rawInit: parseInt(initInput ? initInput.value : "0", 10) || 0
-      };
-    } else {
-      newGroupRaw[st] = { hasRaw: false };
+    const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
+    const isRoot = preds.length === 0;
+
+    let subInitVal = 0;
+    if (!isRoot) {
+      const subInp = document.getElementById(`modalSubInit_${st}`);
+      subInitVal = subInp ? (parseInt(subInp.value, 10) || 0) : 4;
     }
+
+    const chk = document.getElementById(`modalRawCheck_${st}`);
+    const hasRaw = chk ? chk.checked : false;
+    const nameInput = document.getElementById(`modalRawName_${st}`);
+    const initInput = document.getElementById(`modalRawInit_${st}`);
+    newGroupRaw[st] = {
+      isRoot: isRoot,
+      subInit: isRoot ? 0 : subInitVal,
+      hasRaw: hasRaw,
+      rawName: (hasRaw && nameInput) ? nameInput.value.trim() : "",
+      rawInit: (hasRaw && initInput) ? (parseInt(initInput.value, 10) || 0) : 0
+    };
   });
   allRaw[group] = newGroupRaw;
   localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(allRaw));
@@ -1148,16 +1228,81 @@ async function saveCustomFlow() {
           method: "DELETE",
           headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
         });
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
-          method: "PATCH",
-          headers: {
-            apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
-        });
       } catch(e) {}
     }
+
+    // 🌟 同步更新每站的 station_wip：起始工站 input_wip = 0，後續工站 input_wip = subInitVal
+    try {
+      for (const st of activeStations) {
+        const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
+        const isRoot = preds.length === 0;
+        const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 4);
+
+        const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(st)}&select=id,input_wip,output_wip`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        const existing = await checkRes.json();
+        if (existing && existing.length > 0) {
+          if (clearOld || (!isRoot && existing[0].input_wip === 0 && existing[0].output_wip === 0)) {
+            await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+              method: "PATCH",
+              headers: {
+                apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                input_wip: initialInput,
+                output_wip: clearOld ? 0 : existing[0].output_wip,
+                updated_at: new Date().toISOString()
+              })
+            });
+          }
+        } else {
+          await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ group_id: group, station_id: st, input_wip: initialInput, output_wip: 0 })
+          });
+        }
+
+        // 若有附加專屬零件，同步更新 ${st}_RAW
+        if (newGroupRaw[st]?.hasRaw) {
+          const rawSt = `${st}_RAW`;
+          const rawInit = newGroupRaw[st].rawInit || 0;
+          const checkRaw = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(rawSt)}&select=id`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+          });
+          const existingRaw = await checkRaw.json();
+          if (existingRaw && existingRaw.length > 0) {
+            if (clearOld) {
+              await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingRaw[0].id}`, {
+                method: "PATCH",
+                headers: {
+                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ input_wip: rawInit, output_wip: 0, updated_at: new Date().toISOString() })
+              });
+            }
+          } else {
+            await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+              method: "POST",
+              headers: {
+                apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({ group_id: group, station_id: rawSt, input_wip: rawInit, output_wip: 0 })
+            });
+          }
+        }
+      }
+    } catch(errWip) {
+      console.warn("同步 station_wip 發生警告：", errWip);
+    }
+
     loadAll();
   } catch (err) {
     alert("儲存失敗：" + err.message + "\n（但已為您留存本地備份，請檢查網路連線後再次點擊儲存）");

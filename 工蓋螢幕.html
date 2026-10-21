@@ -135,6 +135,26 @@
       </select>
     </div>
 
+    <!-- 🎯 實作模式控制 (測試 vs 正式) 與 全域防呆冷卻設定 -->
+    <div id="modeControlBox" style="display:inline-flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; padding:4px 10px; border-radius:8px; flex-wrap:wrap;">
+      <span style="font-size:13px; font-weight:bold; color:#334155;">🎯 實作模式：</span>
+      <button id="modeTestBtn" onclick="changeSystemMode(0)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;" title="點擊切換為測試練習模式">
+        🧪 測試練習
+      </button>
+      <button id="modeOfficialBtn" onclick="changeSystemMode(1)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#64748b; cursor:pointer;" title="點擊切換為正式實作評分模式">
+        🏆 正式實作 (評分)
+      </button>
+      <span style="border-left:1px solid #cbd5e1; height:18px; margin:0 4px;"></span>
+      <span style="font-size:12px; color:#475569; font-weight:bold;">🛡️ 掃碼防呆:</span>
+      <select id="systemCooldownSelect" onchange="changeSystemCooldown(this.value)" style="padding:2px 6px; font-size:12px; border-radius:4px; border:1px solid #cbd5e1; background:#fff;">
+        <option value="1">1 秒</option>
+        <option value="2">2 秒</option>
+        <option value="3" selected>3 秒</option>
+        <option value="4">4 秒</option>
+        <option value="5">5 秒</option>
+      </select>
+    </div>
+
     <div id="adminControlsArea" style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap;">
       <button id="adminToggleBtn" onclick="toggleAdmin()" style="padding:6px 14px; font-size:13px; font-weight:bold; border-radius:8px; border:1px solid #cbd5e1; background:#f8fafc; color:#334155; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;" title="點擊解鎖管理員以啟用清空與自訂功能">
         🔒 現場看板模式 (點擊解鎖管理)
@@ -210,7 +230,21 @@
 
   <!-- 區塊 3：詳細數據 -->
   <div class="card">
-    <h2>3. 詳細生產歷程數據 (Event Log)</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+      <h2 style="margin:0;">3. 詳細生產歷程數據 (Event Log)</h2>
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <span style="font-size:13px; color:#475569; font-weight:bold;">數據篩選：</span>
+        <button id="filterAllBtn" onclick="setTableFilter('ALL')" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;">
+          🔘 全部 (<span id="countAll">0</span>)
+        </button>
+        <button id="filterOfficialBtn" onclick="setTableFilter('OFFICIAL')" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#166534; cursor:pointer;">
+          🏆 僅看正式 (<span id="countOfficial">0</span>)
+        </button>
+        <button id="filterTestBtn" onclick="setTableFilter('TEST')" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#7e22ce; cursor:pointer;">
+          🧪 僅看測試 (<span id="countTest">0</span>)
+        </button>
+      </div>
+    </div>
     <table id="dataTable">
       <thead>
         <tr>
@@ -246,12 +280,12 @@
       <div style="margin-top:18px; padding:12px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:6px;">
           <div style="font-weight:bold; color:#92400e; font-size:14px;">
-            📦 各工站原生零件投料設定（現場散件/螺絲料盒）：
+            📦 各工站額外物料與起始備料設定：
           </div>
           <span id="modalStationCountBadge" style="font-size:12px; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; padding:2px 8px; border-radius:12px; font-weight:bold;"></span>
         </div>
         <div style="font-size:12px; color:#b45309; margin-bottom:10px;">
-          勾選該工站是否需要在組裝半成品之餘，額外投入現場原生零件（開工需齊備、完工自動扣料 1 件）。依上方流程順序自動聯動，有幾組工站即出現幾組。
+          可勾選工站是否需要特定物料投料或起點初始備料。名稱與數量無預設值，未填寫則依前站半成品標準組裝流動。依上方流程順序自動聯動，有幾組工站即出現幾組。
         </div>
         <div id="modalRawConfigContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:8px;">
           <!-- 動態載入各工站的原生零件勾選框與設定 -->
@@ -343,6 +377,117 @@ document.getElementById("refreshIntervalSelect").onchange = function() {
 };
 
 // 🔐 權限管理系統 (預設為「現場看板唯讀模式」，解鎖後切換為「管理員模式」)
+// 🎯 實作輪次控制 (0: 測試練習, 1: 正式實作) 與 掃描防呆冷卻秒數
+let currentSystemMode = 0; // 0=TEST, 1=OFFICIAL
+let currentCooldownSec = 3; // 1~5 秒
+let currentTableFilter = "ALL"; // ALL, OFFICIAL, TEST
+
+function updateModeButtonsUI() {
+  const testBtn = document.getElementById("modeTestBtn");
+  const officialBtn = document.getElementById("modeOfficialBtn");
+  const cdSelect = document.getElementById("systemCooldownSelect");
+  if (cdSelect) cdSelect.value = currentCooldownSec;
+
+  if (currentSystemMode === 1) {
+    if (officialBtn) {
+      officialBtn.style.background = "#dcfce7";
+      officialBtn.style.color = "#15803d";
+      officialBtn.style.borderColor = "#86efac";
+    }
+    if (testBtn) {
+      testBtn.style.background = "#fff";
+      testBtn.style.color = "#64748b";
+      testBtn.style.borderColor = "#cbd5e1";
+    }
+  } else {
+    if (testBtn) {
+      testBtn.style.background = "#eff6ff";
+      testBtn.style.color = "#1d4ed8";
+      testBtn.style.borderColor = "#93c5fd";
+    }
+    if (officialBtn) {
+      officialBtn.style.background = "#fff";
+      officialBtn.style.color = "#64748b";
+      officialBtn.style.borderColor = "#cbd5e1";
+    }
+  }
+}
+
+async function changeSystemMode(newMode) {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：切換實作模式需管理員權限！請先解鎖管理員。");
+    return;
+  }
+  resetAutoLock();
+
+  const group = document.getElementById("groupSelect").value;
+  if (newMode === 1) {
+    const ok = confirm("⚠️ 即將切換至【🏆 正式實作評分模式】！\n\n現場各工站手機將同步切入正式計分實作。\n建議點擊「確定」自動將當前在製品庫存歸零起跑（測試數據將完整保留，不受影響）；點擊「取消」保留目前在庫。");
+    if (ok && group !== "ALL") {
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+          method: "PATCH",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+        });
+      } catch(e) {}
+    }
+  }
+
+  currentSystemMode = newMode;
+  localStorage.setItem("ie_chair_system_mode", newMode);
+  updateModeButtonsUI();
+
+  // 同步更新雲端 station_wip SYSTEM_MODE
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+      method: "PATCH",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ input_wip: newMode, output_wip: currentCooldownSec, updated_at: new Date().toISOString() })
+    });
+  } catch(e) {}
+
+  alert(`✓ 已成功切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : '🧪 測試練習'}】！現場手機端已同步。`);
+  loadAll();
+}
+
+async function changeSystemCooldown(sec) {
+  currentCooldownSec = parseInt(sec, 10) || 3;
+  localStorage.setItem("ie_chair_cooldown_sec", currentCooldownSec);
+  if (isAdminLoggedIn) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: currentSystemMode, output_wip: currentCooldownSec, updated_at: new Date().toISOString() })
+      });
+    } catch(e) {}
+  }
+}
+
+function setTableFilter(filter) {
+  currentTableFilter = filter;
+  const btns = {
+    ALL: document.getElementById("filterAllBtn"),
+    OFFICIAL: document.getElementById("filterOfficialBtn"),
+    TEST: document.getElementById("filterTestBtn")
+  };
+  Object.keys(btns).forEach(k => {
+    if (!btns[k]) return;
+    if (k === filter) {
+      btns[k].style.background = k === 'OFFICIAL' ? '#dcfce7' : k === 'TEST' ? '#f3e8ff' : '#eff6ff';
+      btns[k].style.color = k === 'OFFICIAL' ? '#15803d' : k === 'TEST' ? '#7e22ce' : '#1d4ed8';
+      btns[k].style.borderColor = k === 'OFFICIAL' ? '#86efac' : k === 'TEST' ? '#d8b4fe' : '#93c5fd';
+    } else {
+      btns[k].style.background = "#fff";
+      btns[k].style.color = "#64748b";
+      btns[k].style.borderColor = "#cbd5e1";
+    }
+  });
+  showTable(currentEvents);
+  showStats(currentEvents);
+}
+
 const ADMIN_PIN_KEY = "ie_chair_admin_pin";
 const DEFAULT_PIN = "1688";
 let isAdminLoggedIn = false;
@@ -535,6 +680,18 @@ async function loadAll() {
       return tA - tB;
     });
 
+    try {
+      const modeRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      const modeRows = await modeRes.json();
+      if (modeRows && modeRows.length > 0) {
+        currentSystemMode = modeRows[0].input_wip || 0;
+        currentCooldownSec = modeRows[0].output_wip || 3;
+        updateModeButtonsUI();
+      }
+    } catch(e) {}
+
     showTable(currentEvents);
     showStats(currentEvents);
     document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
@@ -626,10 +783,11 @@ async function renderFlowDiagram(group) {
   const styles = [];
 
   stationSet.forEach(stId => {
+    if (stId === "SYSTEM_MODE") return;
     const w = wipMap[stId] || { inWip: 0, outWip: 0 };
     const rawCfg = getStationRaw(group, stId);
     const hasRaw = !!rawCfg.hasRaw;
-    const rawName = rawCfg.rawName || "原生料";
+    const rawName = rawCfg.rawName || "";
 
     // 找出所有前置來源站 (predecessors)
     const predecessors = flows
@@ -658,7 +816,7 @@ async function renderFlowDiagram(group) {
       });
       feederKit = minAvail === 999999 ? 0 : minAvail;
       totalSub = feederKit + w.inWip;
-      if (hasRaw) {
+      if (hasRaw && rawName) {
         rawStock = (wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined)
           ? wipMap[stId + '_RAW'].inWip
           : (rawCfg.rawInit ?? 10);
@@ -686,11 +844,11 @@ async function renderFlowDiagram(group) {
     // 3. 節點標籤呈現
     let inText = "";
     if (predecessors.length === 0) {
-      inText = hasRaw ? `📥 ${rawName}: ${w.inWip}顆` : "📥 原料充足";
+      inText = (hasRaw && rawName) ? `📥 ${rawName}: ${w.inWip}件` : `📥 站前可用料: ${w.inWip}件`;
     } else if (hasRaw) {
-      inText = `📥 半成品: ${totalSub}套 ｜ ${rawName}: ${rawStock}顆 ➔ 可開工: ${inQty}套`;
+      inText = (hasRaw && rawName) ? `📥 半成品: ${totalSub}套 ｜ ${rawName}: ${rawStock}件 ➔ 可開工: ${inQty}套` : `📥 半成品: ${totalSub}套 ➔ 可開工: ${inQty}套`;
     } else {
-      inText = `📥 站前: ${inQty}${isMerge ? '套' : '件'}`;
+      inText = `📥 前置半成品: ${inQty}${isMerge ? '套' : '件'}`;
     }
 
     let outText = "";
@@ -702,8 +860,8 @@ async function renderFlowDiagram(group) {
 
     const partNo = getStationPart(group, stId);
     let partTag = partNo ? `<br><b style='color:#1e40af; font-size:12px;'>🏷️ 料號: ${partNo}</b>` : "";
-    if (hasRaw) {
-      partTag += `<br><span style='color:#b45309; font-size:11px; font-weight:bold;'>📦 含原生件: ${rawName}</span>`;
+    if (hasRaw && rawName) {
+      partTag += `<br><span style='color:#b45309; font-size:11px; font-weight:bold;'>📦 配件: ${rawName}</span>`;
     }
 
     const isBottleneck = (stId === window.currentBottleneckStation && window.currentMaxCycle > 0);
@@ -842,8 +1000,8 @@ function refreshModalRawConfigs(group) {
   activeStations.forEach(st => {
     const savedCfg = tempValues[st] || groupRaw[st] || {};
     const hasRaw = !!savedCfg.hasRaw;
-    const rawName = (savedCfg.rawName !== undefined && savedCfg.rawName !== null) ? savedCfg.rawName : "零件5";
-    const rawInit = (savedCfg.rawInit !== undefined && savedCfg.rawInit !== null) ? savedCfg.rawInit : 10;
+    const rawName = (savedCfg.rawName !== undefined && savedCfg.rawName !== null) ? savedCfg.rawName : "";
+    const rawInit = (savedCfg.rawInit !== undefined && savedCfg.rawInit !== null) ? savedCfg.rawInit : "";
 
     const div = document.createElement("div");
     div.style.cssText = "background:#fff; border:1px solid #fcd34d; border-radius:8px; padding:8px 12px; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box;";
@@ -851,12 +1009,12 @@ function refreshModalRawConfigs(group) {
       <div style="display:flex; align-items:center; gap:8px;">
         <input type="checkbox" id="modalRawCheck_${st}" class="modal-raw-check" data-station="${st}" ${hasRaw ? "checked" : ""} style="cursor:pointer; width:16px; height:16px; margin:0;">
         <label for="modalRawCheck_${st}" style="font-weight:bold; color:#1e293b; font-size:13px; cursor:pointer; margin:0;">
-          ${st} 包含現場原生零件
+          ${st} 包含現場物料投料
         </label>
       </div>
       <div id="modalRawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; align-items:center; gap:6px; margin-top:8px; font-size:12px; flex-wrap:wrap;">
         <span style="color:#92400e; font-weight:bold; white-space:nowrap;">名稱:</span>
-        <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="例如:零件5" style="padding:4px 8px; font-size:12px; flex:1; min-width:70px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;">
+        <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="自訂名稱 (選填，如:螺絲)" style="padding:4px 8px; font-size:12px; flex:1; min-width:70px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;">
         <span style="color:#92400e; font-weight:bold; white-space:nowrap;">備料:</span>
         <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
           <input type="number" id="modalRawInit_${st}" value="${rawInit}" min="0" style="border:none; outline:none; width:38px; padding:4px 0; font-size:12px; text-align:right;">
@@ -948,9 +1106,9 @@ async function saveCustomFlow() {
       const nameInput = document.getElementById(`modalRawName_${st}`);
       const initInput = document.getElementById(`modalRawInit_${st}`);
       newGroupRaw[st] = {
-        hasRaw: true,
-        rawName: (nameInput ? nameInput.value.trim() : "") || "零件5",
-        rawInit: parseInt(initInput ? initInput.value : "10", 10) || 10
+        hasRaw: !!(nameInput && nameInput.value.trim()),
+        rawName: (nameInput ? nameInput.value.trim() : ""),
+        rawInit: parseInt(initInput ? initInput.value : "0", 10) || 0
       };
     } else {
       newGroupRaw[st] = { hasRaw: false };
@@ -1011,7 +1169,25 @@ function showTable(data) {
   const tbody = document.querySelector("#dataTable tbody");
   tbody.innerHTML = "";
 
-  data.forEach((row, idx) => {
+  const totalCount = data.length;
+  const officialCount = data.filter(r => !r.product_id || !r.product_id.startsWith("TEST-")).length;
+  const testCount = data.filter(r => r.product_id && r.product_id.startsWith("TEST-")).length;
+
+  const elAll = document.getElementById("countAll");
+  const elOff = document.getElementById("countOfficial");
+  const elTst = document.getElementById("countTest");
+  if (elAll) elAll.textContent = totalCount;
+  if (elOff) elOff.textContent = officialCount;
+  if (elTst) elTst.textContent = testCount;
+
+  let filtered = data;
+  if (currentTableFilter === "OFFICIAL") {
+    filtered = data.filter(r => !r.product_id || !r.product_id.startsWith("TEST-"));
+  } else if (currentTableFilter === "TEST") {
+    filtered = data.filter(r => r.product_id && r.product_id.startsWith("TEST-"));
+  }
+
+  filtered.forEach((row, idx) => {
     const partNo = getStationPart(row.group_id, row.station_id);
     const tr = document.createElement("tr");
 
@@ -1033,7 +1209,12 @@ function showTable(data) {
     const values = [
       shortId,
       row.group_id,
-      row.product_id,
+      (() => {
+        const isTest = (row.product_id || "").startsWith("TEST-");
+        return isTest
+          ? `<span style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🧪測試</span><b>${row.product_id || '-'}</b>`
+          : `<span style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🏆正式</span><b>${row.product_id || '-'}</b>`;
+      })(),
       row.station_id,
       partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : "-",
       wipDisplay,
@@ -1046,7 +1227,7 @@ function showTable(data) {
 
     values.forEach((v, idx) => {
       const td = document.createElement("td");
-      if (idx === 0 || idx === 4 || idx === 5) {
+      if (idx === 0 || idx === 2 || idx === 4 || idx === 5) {
         td.innerHTML = v;
       } else {
         td.textContent = v ?? "";
@@ -1090,7 +1271,13 @@ function showStats(data) {
   const tbody = document.querySelector("#statTable tbody");
   tbody.innerHTML = "";
 
-  const rows = data.filter(r => r.status === "COMPLETED");
+  let completed = data.filter(r => r.status === "COMPLETED");
+  if (currentTableFilter === "OFFICIAL") {
+    completed = completed.filter(r => !r.product_id || !r.product_id.startsWith("TEST-"));
+  } else if (currentTableFilter === "TEST") {
+    completed = completed.filter(r => r.product_id && r.product_id.startsWith("TEST-"));
+  }
+  const rows = completed;
 
   // 1. 取得整條產線最早開工時間 (基準起跑時間)
   const allStartTimes = rows.map(r => new Date(r.start_time).getTime()).filter(t => !isNaN(t));
@@ -1282,7 +1469,12 @@ document.getElementById("downloadBtn").onclick = () => {
     const r = [
       row.id,
       row.group_id,
-      row.product_id,
+      (() => {
+        const isTest = (row.product_id || "").startsWith("TEST-");
+        return isTest
+          ? `<span style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🧪測試</span><b>${row.product_id || '-'}</b>`
+          : `<span style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🏆正式</span><b>${row.product_id || '-'}</b>`;
+      })(),
       row.station_id,
       `"${partNo || ''}"`,
       row.wip_before_start ?? "",

@@ -881,9 +881,9 @@ async function renderFlowDiagram(group) {
 
     let outText = "";
     if (isFinalStation) {
-      outText = `📤 總成品: ${currentOutBuffer}`;
+      outText = `🏁 總成品: ${w.outWip} 件`;
     } else {
-      outText = `📤 站後: ${currentOutBuffer}`;
+      outText = `📤 累計完工: ${w.outWip} 件 (站後待領: ${currentOutBuffer} 件)`;
     }
 
     const partNo = getStationPart(group, stId);
@@ -895,7 +895,7 @@ async function renderFlowDiagram(group) {
     const isBottleneck = (stId === window.currentBottleneckStation && window.currentMaxCycle > 0);
     const bottleneckTag = isBottleneck ? `<br><b style='color:#dc2626;'>🚨 瓶頸站 (CT: ${window.currentMaxCycle.toFixed(1)}s)</b>` : "";
 
-    code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText} ｜ ${outText}${bottleneckTag}"]\n`;
+    code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText}<br>${outText}${bottleneckTag}"]\n`;
 
     // 4. 顏色預警邏輯 (嚴格符合圖例規範)：
     if (isBottleneck) {

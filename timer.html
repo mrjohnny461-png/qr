@@ -421,6 +421,7 @@ const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
 const urlParams = new URLSearchParams(window.location.search);
 const groupId = (urlParams.get("group") || "G01").trim();
 const stationId = (urlParams.get("station") || "ST01").trim();
+const urlIsRoot = urlParams.get("is_root") === "1" || urlParams.get("is_root") === "true";
 
 // 🏷️ 取得生產料號：優先從 URL 參數 (?part=) 取得，若無則自動自本機快存 (localStorage) 讀取該組別與工站料號
 let partNo = (urlParams.get("part") || "").trim();
@@ -597,9 +598,15 @@ async function init() {
     await fetchWipData();
     await autoSyncLive(); // 讀取全域 SYSTEM_MODE 與歷史
     await computeKitting();
-    showMsg("就緒，請掃描 QR Code 開工", "#10b981");
+    showMsg(`撠梁?嚗?撠?剖?皞蝡?{groupId}-${stationId}????撌匝, "#10b981");
+
+    // ? ?芸???撣賊??豢? (?刻???Ⅳ璅∪?嚗??暺???)
+    setTimeout(() => {
+      restartCameraScanner(true);
+    }, 400);
 
     setInterval(autoSyncLive, 2000);
+    setInterval(updateScannerBadge, 400);
   } catch (err) {
     showMsg("初始化失敗：" + err.message, "#ef4444");
   }
@@ -1173,50 +1180,80 @@ function showScanBanner(msg, type = "info", duration = 3000) {
 }
 
 // 即時更新掃描器狀態徽章 (包含 5 秒防呆即時倒數)
+// 即時更新掃描器與主按鈕狀態指示 (全自動純掃碼模式，不需點擊按鈕)
 function updateScannerBadge() {
   const badge = document.getElementById("scanStatusBadge");
-  if (!badge) return;
+  const mainBtn = document.getElementById("mainActionBtn");
+  const now = Date.now();
 
   if (!isScannerRunning) {
-    badge.textContent = "鏡頭未啟動";
-    badge.className = "scan-badge";
-    badge.style.background = "#f1f5f9";
-    badge.style.color = "#64748b";
+    if (badge) {
+      badge.textContent = "鏡頭待命中";
+      badge.className = "scan-badge";
+      badge.style.background = "#fef3c7";
+      badge.style.color = "#92400e";
+    }
+    if (mainBtn && !isWorking) {
+      mainBtn.textContent = `📷 點此開啟鏡頭（對準【${groupId}-${stationId}】桌牌開工）`;
+      mainBtn.className = "main-btn btn-start";
+      mainBtn.disabled = false;
+    }
     return;
   }
 
-  const now = Date.now();
   if (now < scanCooldownUntil) {
     const remain = ((scanCooldownUntil - now) / 1000).toFixed(1);
-    badge.textContent = `⏳ 完工冷卻中 (${remain}s)`;
-    badge.className = "scan-badge badge-cooldown";
+    if (badge) {
+      badge.textContent = `⏳ 完工冷卻中 (${remain}s)`;
+      badge.className = "scan-badge badge-cooldown";
+    }
+    if (mainBtn) {
+      mainBtn.textContent = `⏳ 完工冷卻中 (${remain}s) - 請移開桌牌`;
+      mainBtn.className = "main-btn btn-disabled";
+      mainBtn.disabled = true;
+    }
     return;
   }
 
   if (isWorking) {
     if (now < scanLockoutUntil) {
       const remain = ((scanLockoutUntil - now) / 1000).toFixed(1);
-      badge.textContent = `🛡️ 防呆鎖定中 (${remain}s)`;
-      badge.className = "scan-badge badge-locked";
+      if (badge) {
+        badge.textContent = `🛡️ 防呆鎖定中 (${remain}s)`;
+        badge.className = "scan-badge badge-locked";
+      }
+      if (mainBtn) {
+        mainBtn.textContent = `🛡️ 防呆鎖定中 (${remain}s) - 開工未滿 ${currentCooldownSec} 秒`;
+        mainBtn.className = "main-btn btn-disabled";
+        mainBtn.disabled = true;
+      }
     } else {
-      badge.textContent = "🟢 允許完工掃描";
-      badge.className = "scan-badge badge-ready";
+      if (badge) {
+        badge.textContent = "🟢 允許完工掃碼";
+        badge.className = "scan-badge badge-ready";
+      }
+      if (mainBtn) {
+        mainBtn.textContent = `⏹ 作業計時中 (${getCurProductCode()}) - 請對準桌牌掃碼完工`;
+        mainBtn.className = "main-btn btn-finish";
+        mainBtn.disabled = false;
+      }
     }
   } else {
-    badge.textContent = "🟢 等候掃碼開工";
-    badge.className = "scan-badge badge-ready";
+    if (badge) {
+      badge.textContent = "🟢 等候掃碼開工";
+      badge.className = "scan-badge badge-ready";
+    }
+    if (mainBtn) {
+      mainBtn.textContent = `📷 請將手機對準【${groupId} - ${stationId}】桌牌開工`;
+      mainBtn.className = "main-btn btn-start";
+      mainBtn.disabled = false;
+    }
   }
 }
 
-// 統一開工邏輯 (開工僅限相機掃碼 SCAN)
+// 統一開工邏輯 (純掃碼作業，不需點擊按鈕)
 async function handleStartWork(source = "SCAN") {
   if (isWorking) return;
-
-  if (source === "MANUAL") {
-    playAudioFeedback("WARNING");
-    showScanBanner("📷 開工方式僅限相機掃碼！請對準 QR Code 掃描！", "error", 3000);
-    return;
-  }
 
   // 正式實作次數限制防呆 (只允許 1 次正式實作)
   if (currentSystemMode === "OFFICIAL" && currentOutWip >= 1) {
@@ -1227,11 +1264,10 @@ async function handleStartWork(source = "SCAN") {
     return;
   }
 
-
-  // 下游工站缺料防呆
+  // 下游工站缺料防呆 (起點站原料無限供應)
   if (!isRootStation && kitCount <= 0) {
     playAudioFeedback("WARNING");
-    const tip = "❌ 站前缺料或半成品未送達，禁止開始計時！請等待前站送料或手動補入備料。";
+    const tip = "❌ 站前缺料或半成品未送達，禁止開始計時！請等待前站送料或補充備料。";
     showMsg(tip, "#dc2626");
     showScanBanner(tip, "error", 3500);
     return;
@@ -1245,20 +1281,16 @@ async function handleStartWork(source = "SCAN") {
   startTime = new Date();
   scanLockoutUntil = Date.now() + (currentCooldownSec * 1000); // 🛡️ 動態掃碼防呆鎖定保護！
 
-  mainBtn.disabled = false;
-  mainBtn.textContent = `■ 完成作業 (${prodId})`;
-  mainBtn.className = "main-btn btn-finish";
-  showMsg(`計時進行中... (${currentSystemMode === "TEST" ? "🧪測試練習" : "🏆正式實作"})`, "#10b981");
-
   playAudioFeedback("START");
-  showScanBanner(`🟢 【掃碼開工成功】(${prodId}) 開始作業！`, "success", 2500);
+  showScanBanner(`🟢 【掃碼開工成功】(${prodId}) 開始作業！完工請再次對準桌牌`, "success", 3000);
+  showMsg(`計時進行中... (${currentSystemMode === "TEST" ? "🧪測試練習" : "🏆正式實作"})`, "#10b981");
 
   startTimer();
   updateScannerBadge();
 }
 
-// 統一完工邏輯 (支援掃碼完工與按鈕完工，皆受冷卻秒數管制)
-async function handleFinishWork(source = "MANUAL") {
+// 統一完工邏輯 (純掃碼作業，不需點擊按鈕)
+async function handleFinishWork(source = "SCAN") {
   if (!isWorking) return;
 
   const now = Date.now();
@@ -1271,7 +1303,6 @@ async function handleFinishWork(source = "MANUAL") {
     return;
   }
 
-  mainBtn.disabled = true;
   showMsg("完工紀錄中...", "#64748b");
   clearInterval(timerInterval);
 
@@ -1318,11 +1349,11 @@ async function handleFinishWork(source = "MANUAL") {
     document.getElementById("timerDisplay").textContent = "00:00.0";
     await computeKitting();
 
-    // 5. 設定完工冷卻期 2 秒 (防止條碼尚未移開鏡頭造成立即重開工)
-    scanCooldownUntil = Date.now() + 2000;
+    // 5. 設定完工冷卻期 2.5 秒 (防止條碼尚未移開鏡頭造成立即重開工)
+    scanCooldownUntil = Date.now() + 2500;
 
     playAudioFeedback("FINISH");
-    const finishMsg = `✓ 【${source === "SCAN" ? "掃碼" : "按鈕"}完工】${finishedProduct} 完成！耗時 ${durationSec} 秒`;
+    const finishMsg = `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒`;
     showMsg(finishMsg, "#10b981");
     showScanBanner(finishMsg, "success", 3000);
     updateScannerBadge();
@@ -1330,32 +1361,33 @@ async function handleFinishWork(source = "MANUAL") {
     // 冷卻期結束自動恢復待命狀態
     setTimeout(() => {
       updateScannerBadge();
-    }, 2100);
+    }, 2600);
 
   } catch (err) {
-    mainBtn.disabled = false;
     showMsg("存檔失敗：" + err.message, "#ef4444");
     showScanBanner("存檔失敗：" + err.message, "error", 4000);
     playAudioFeedback("WARNING");
   }
 }
 
-// 主操作按鈕：手動操作與相機導引
+// 主操作按鈕：點擊輔助喚醒相機，不需作業員強制點擊
 const mainBtn = document.getElementById("mainActionBtn");
 mainBtn.addEventListener("click", async function() {
-  if (!isWorking) {
-    // ⚠️ 開工方式僅限相機掃碼！點擊按鈕不直接開工，而是引導作業員掃描 QR Code
-    playAudioFeedback("WARNING");
-    if (!isScannerRunning) {
-      toggleCameraScanner();
-      showScanBanner("📷 開工方式僅限掃描！已自動為您啟動鏡頭，請對準工站 QR Code 掃描！", "info", 3500);
-    } else {
-      showScanBanner("📷 開工方式僅限掃描！請將工站 QR Code 對準鏡頭！", "info", 2500);
-    }
+  if (!isScannerRunning) {
+    toggleCameraScanner();
     return;
+  }
+  if (!isWorking) {
+    showScanBanner(`📷 請將手機鏡頭對準本站【${groupId}-${stationId}】桌牌 QR Code 自動開工！`, "info", 3000);
   } else {
-    // 完工：支援手動點擊完工，但嚴格受冷卻防呆管制
-    await handleFinishWork("MANUAL");
+    const now = Date.now();
+    if (now < scanLockoutUntil) {
+      const remainSec = ((scanLockoutUntil - now) / 1000).toFixed(1);
+      playAudioFeedback("WARNING");
+      showScanBanner(`🛡️ 防呆保護中：開工未滿 ${currentCooldownSec} 秒禁止完工！(請再等候 ${remainSec} 秒)`, "warn", 2500);
+    } else {
+      await handleFinishWork("MANUAL");
+    }
   }
 });
 
@@ -1397,7 +1429,7 @@ async function restartCameraScanner(silent = false) {
   if (resumeHint) resumeHint.style.display = "none";
 
   try {
-    if (!silent) showScanBanner("正在重新連接相機畫面...", "info", 1500);
+    if (!silent) showScanBanner("正在連接工站掃描鏡頭...", "info", 1500);
 
     // 1. 安全關閉並清理舊實例
     if (html5QrCodeScanner) {
@@ -1413,11 +1445,21 @@ async function restartCameraScanner(silent = false) {
       } catch (e) {}
     }
 
-    // 2. 重新初始化並掛載相機
-    html5QrCodeScanner = new Html5Qrcode("qr-reader");
+    // 2. 重新初始化並掛載相機 (全面支援 QR Code 與各種條碼)
+    const formatsToSupport = (typeof Html5QrcodeSupportedFormats !== "undefined") ? [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A
+    ] : undefined;
+
+    html5QrCodeScanner = new Html5Qrcode("qr-reader", formatsToSupport ? { formatsToSupport: formatsToSupport, verbose: false } : undefined);
+
     const config = {
-      fps: 10,
-      qrbox: { width: 220, height: 220 },
+      fps: 15,
+      qrbox: { width: 240, height: 240 },
       aspectRatio: 1.0
     };
 
@@ -1431,13 +1473,19 @@ async function restartCameraScanner(silent = false) {
     isScannerRunning = true;
     scannerWasActiveBeforeHidden = true;
     if (viewportBox) viewportBox.style.display = "block";
+    const btn = document.getElementById("btnToggleScanner");
+    if (btn) {
+      btn.textContent = "⏹ 關閉相機";
+      btn.style.background = "#fee2e2";
+      btn.style.color = "#dc2626";
+    }
     updateScannerBadge();
     await requestScreenWakeLock();
-    if (!silent) showScanBanner("相機已成功喚醒！", "success", 2000);
+    if (!silent) showScanBanner(`📷 鏡頭就緒！請對準【${groupId}-${stationId}】桌牌掃描`, "success", 2500);
 
   } catch (err) {
     console.warn("自動重啟相機被瀏覽器政策暫停，顯示點擊喚醒按鈕:", err);
-    if (resumeHint && isScannerRunning) {
+    if (resumeHint) {
       resumeHint.style.display = "flex";
     }
   } finally {
@@ -1466,10 +1514,12 @@ async function toggleCameraScanner() {
     scannerWasActiveBeforeHidden = false;
     releaseScreenWakeLock();
     if (resumeHint) resumeHint.style.display = "none";
-    viewportBox.style.display = "none";
-    btn.textContent = "▶ 開啟相機";
-    btn.style.background = "#eff6ff";
-    btn.style.color = "#2563eb";
+    if (viewportBox) viewportBox.style.display = "none";
+    if (btn) {
+      btn.textContent = "▶ 開啟相機";
+      btn.style.background = "#eff6ff";
+      btn.style.color = "#2563eb";
+    }
     updateScannerBadge();
     showScanBanner("相機掃描已關閉", "info", 2000);
   } else {
@@ -1478,64 +1528,11 @@ async function toggleCameraScanner() {
       alert("相機掃描套件尚未載入完成，請確認網路連線或重新整理頁面。");
       return;
     }
-
-    try {
-      btn.textContent = "⏳ 啟動中...";
-      btn.disabled = true;
-      viewportBox.style.display = "block";
-      if (resumeHint) resumeHint.style.display = "none";
-
-      html5QrCodeScanner = new Html5Qrcode("qr-reader");
-
-      const config = {
-        fps: 10,
-        qrbox: { width: 220, height: 220 },
-        aspectRatio: 1.0
-      };
-
-      // 優先使用後置鏡頭 (environment)
-      await html5QrCodeScanner.start(
-        { facingMode: "environment" },
-        config,
-        onQrCodeScanned,
-        onQrScanError
-      );
-
-      isScannerRunning = true;
-      scannerWasActiveBeforeHidden = true;
-      btn.disabled = false;
-      btn.textContent = "⏹ 關閉相機";
-      btn.style.background = "#fee2e2";
-      btn.style.color = "#dc2626";
-      updateScannerBadge();
-      await requestScreenWakeLock();
-      showScanBanner("相機已就緒！請將 QR Code 對準鏡頭", "success", 2500);
-
-      // 解鎖瀏覽器音效播放限制
-      try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          const dummyCtx = new AudioContext();
-          if (dummyCtx.state === 'suspended') dummyCtx.resume();
-        }
-      } catch(e) {}
-
-    } catch (err) {
-      console.error("相機啟動失敗:", err);
-      viewportBox.style.display = "none";
-      btn.disabled = false;
-      btn.textContent = "▶ 開啟相機";
-      btn.style.background = "#eff6ff";
-      btn.style.color = "#2563eb";
-      isScannerRunning = false;
-      scannerWasActiveBeforeHidden = false;
-      updateScannerBadge();
-      alert("無法啟動相機，請確認瀏覽器已允許相機存取權限。\n錯誤資訊: " + (err.message || err));
-    }
+    await restartCameraScanner(false);
   }
 }
 
-// 掃描成功回呼 (含冷卻防呆)
+// 掃描成功回呼 (含冷卻防呆) - 純掃碼直接觸發開工與完工
 async function onQrCodeScanned(decodedText, decodedResult) {
   if (!decodedText) return;
   const now = Date.now();
@@ -1545,8 +1542,8 @@ async function onQrCodeScanned(decodedText, decodedResult) {
     return;
   }
 
-  // 2. 影格防抖：同內容或 800ms 內不重複觸發
-  if (decodedText === lastDecodedText && (now - lastDecodedTime) < 800) {
+  // 2. 影格防抖：同內容或 600ms 內不重複觸發
+  if (decodedText === lastDecodedText && (now - lastDecodedTime) < 600) {
     return;
   }
   lastDecodedText = decodedText;
@@ -1556,12 +1553,12 @@ async function onQrCodeScanned(decodedText, decodedResult) {
   const validation = validateQrContent(decodedText);
   if (!validation.valid) {
     playAudioFeedback("WARNING");
-    showScanBanner(`⛔ ${validation.reason}`, "error", 4000);
-    showMsg(`⛔ ${validation.reason}`, "#dc2626");
+    showScanBanner(validation.reason, "error", 4000);
+    showMsg(validation.reason, "#dc2626");
     return;
   }
 
-  // 4. 判斷目前作業狀態 (開工 vs 完工)
+  // 4. 判斷目前作業狀態 (開工 vs 完工) - 不須點擊按鈕，掃碼直接切換
   if (!isWorking) {
     await handleStartWork("SCAN");
   } else {
@@ -1577,32 +1574,47 @@ function onQrScanError(errorMessage) {
 function validateQrContent(text) {
   const raw = text.trim();
 
-  // 1. 跨組別防呆：比對條碼中的組別 (例如 G01~G12 或 group=G01)
-  const grpMatch = raw.match(/\bG(0[1-9]|[1-9][0-9])\b/i) || raw.match(/group=(G\d+)/i);
-  if (grpMatch) {
-    const detectedGrp = (grpMatch[1] || grpMatch[0]).toUpperCase();
-    if (detectedGrp !== groupId.toUpperCase()) {
-      return {
-        valid: false,
-        reason: `跨組別條碼！條碼為【${detectedGrp}】，本手機為【${groupId}】，禁止跨組操作！`
-      };
+  // 1. 偵測條碼中的組別 (支援 ?group=G03 或 獨立單字 G01~G12)
+  let detectedGrp = null;
+  const grpParamMatch = raw.match(/[?&]group=(G\d+)/i);
+  if (grpParamMatch) {
+    detectedGrp = grpParamMatch[1].toUpperCase();
+  } else {
+    const grpWordMatch = raw.match(/(?:^|[^a-zA-Z0-9])(G0[1-9]|G[1-9][0-9])(?:$|[^a-zA-Z0-9])/i);
+    if (grpWordMatch) {
+      detectedGrp = grpWordMatch[1].toUpperCase();
     }
   }
 
-  // 2. 工站代碼防呆比對
-  const stMatch = raw.match(/\bST0[1-8]\b/i) || raw.match(/station=(ST0[1-8])/i);
-  if (stMatch) {
-    const detectedSt = (stMatch[1] || stMatch[0]).toUpperCase();
-    if (detectedSt !== stationId.toUpperCase()) {
-      return {
-        valid: false,
-        reason: `工站不符！條碼為【${detectedSt}】，本站為【${stationId}】！`
-      };
+  if (detectedGrp && detectedGrp !== groupId.toUpperCase()) {
+    return {
+      valid: false,
+      reason: `⛔ 跨組別條碼！掃到【${detectedGrp}】，但本手機為【${groupId}】，禁止跨組操作！`
+    };
+  }
+
+  // 2. 偵測條碼中的工站 (支援 &station=ST01 或 獨立單字 ST01~ST08)
+  let detectedSt = null;
+  const stParamMatch = raw.match(/[?&]station=(ST\d+)/i);
+  if (stParamMatch) {
+    detectedSt = stParamMatch[1].toUpperCase();
+  } else {
+    const stWordMatch = raw.match(/(?:^|[^a-zA-Z0-9])(ST0[1-8])(?:$|[^a-zA-Z0-9])/i);
+    if (stWordMatch) {
+      detectedSt = stWordMatch[1].toUpperCase();
     }
   }
 
-  return { valid: true };
+  if (detectedSt && detectedSt !== stationId.toUpperCase()) {
+    return {
+      valid: false,
+      reason: `⛔ 工站不符！掃到【${detectedSt}】，但本工站為【${stationId}】！請掃本站桌牌！`
+    };
+  }
+
+  return { valid: true, detectedGrp, detectedSt };
 }
+
 
 // 綁定相機啟動開關按鈕
 document.getElementById("btnToggleScanner").addEventListener("click", toggleCameraScanner);

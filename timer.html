@@ -598,9 +598,9 @@ async function init() {
     await fetchWipData();
     await autoSyncLive(); // 讀取全域 SYSTEM_MODE 與歷史
     await computeKitting();
-    showMsg(`撠梁?嚗?撠?剖?皞蝡?{groupId}-${stationId}????撌匝, "#10b981");
+    showMsg("就緒，請將鏡頭對準本站桌牌開工", "#10b981");
 
-    // ? ?芸???撣賊??豢? (?刻???Ⅳ璅∪?嚗??暺???)
+    // 📷 自動啟動常駐相機 (全自動純掃碼模式，不需點擊按鈕)
     setTimeout(() => {
       restartCameraScanner(true);
     }, 400);

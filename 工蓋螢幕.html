@@ -824,15 +824,19 @@ async function renderFlowDiagram(group) {
       .map(f => (f.next_station_id || "").trim())
       .filter(Boolean);
 
-    // 1. 計算【站前可用量 / 齊套數】
+    // 1. 計算【站前可用量 / 齊套數】(支援扣除備料後的精確在製品守恆)
     const isRoot = predecessors.length === 0;
     const isMerge = predecessors.length > 1;
     let inQty = 0;
     let feederKit = 0;
-    const manualSubBuffer = (w.inWip !== undefined && w.inWip > 0)
+    const currentManualBuffer = (w.inWip !== undefined && w.inWip > 0)
       ? w.inWip
       : ((w.outWip === 0 && rawCfg.subInit) ? rawCfg.subInit : 0);
-    let totalSub = manualSubBuffer;
+    const subInitVal = rawCfg.subInit || 0;
+    const manualConsumed = Math.max(0, subInitVal - currentManualBuffer);
+    const feederConsumed = Math.max(0, w.outWip - manualConsumed);
+
+    let totalSub = currentManualBuffer;
     let rawStock = 0;
     if (isRoot) {
       inQty = 9999;
@@ -841,11 +845,11 @@ async function renderFlowDiagram(group) {
       let minAvail = 999999;
       predecessors.forEach(p => {
         const pOut = wipMap[p]?.outWip || 0;
-        const avail = Math.max(0, pOut - w.outWip);
+        const avail = Math.max(0, pOut - feederConsumed);
         if (avail < minAvail) minAvail = avail;
       });
       feederKit = minAvail === 999999 ? 0 : minAvail;
-      totalSub = feederKit + manualSubBuffer;
+      totalSub = feederKit + currentManualBuffer;
       if (hasRaw && rawName) {
         rawStock = (wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined)
           ? wipMap[stId + '_RAW'].inWip
@@ -856,15 +860,22 @@ async function renderFlowDiagram(group) {
       }
     }
 
-    // 2. 計算【站後在庫量】: 本站完工 - 下游站完工消耗 (若無下游站則為總成品數)
+    // 2. 計算【站後在庫量】: 本站完工 - 下游站完工消耗 (排除下游站自體備料負擔，防止雙重扣減)
     const isFinalStation = successors.length === 0;
     let currentOutBuffer = w.outWip;
 
     if (!isFinalStation) {
       let downstreamConsumed = 0;
       successors.forEach(s => {
-        const sOut = wipMap[s]?.outWip || 0;
-        if (sOut > downstreamConsumed) downstreamConsumed = sOut;
+        const sWip = wipMap[s] || { inWip: 0, outWip: 0 };
+        const sRawCfg = getStationRaw(group, s);
+        const sSubInit = sRawCfg.subInit || 0;
+        const sCurrentManual = (sWip.inWip !== undefined && sWip.inWip > 0)
+          ? sWip.inWip
+          : ((sWip.outWip === 0 && sSubInit) ? sSubInit : 0);
+        const sManualConsumed = Math.max(0, sSubInit - sCurrentManual);
+        const sFeederConsumed = Math.max(0, (sWip.outWip || 0) - sManualConsumed);
+        if (sFeederConsumed > downstreamConsumed) downstreamConsumed = sFeederConsumed;
       });
       currentOutBuffer = Math.max(0, w.outWip - downstreamConsumed);
     }

@@ -809,8 +809,12 @@ async function computeKitting() {
     wipMap[(w.station_id || "").trim()] = w;
   });
 
-  // 本站累計已消耗量 = 本站已完成數 + (若正在作業中則已取走1套)
-  const consumed = currentOutWip + (isWorking ? 1 : 0);
+  // 本站累計已完工/開工總件數
+  const totalProducedOrWorking = currentOutWip + (isWorking ? 1 : 0);
+  // 計算本站已自「自體預發備料 / 初始備料」中消耗的件數
+  const manualConsumed = Math.max(0, (subInitCount || 0) - manualBufferWip);
+  // 真正自前置工站 (Feeder) 領取的消耗件數 (排除自體備料負擔，防止雙重扣減)
+  const feederConsumed = Math.max(0, totalProducedOrWorking - manualConsumed);
 
   feederDetails = [];
   let minFeederAvail = 999999;
@@ -819,8 +823,8 @@ async function computeKitting() {
     const fWip = wipMap[fSt] || { output_wip: 0 };
     const fTotalOut = fWip.output_wip || 0;
     
-    // 前站半成品可用量 = 前站累計產出 - 本站累計已消耗量
-    const avail = Math.max(0, fTotalOut - consumed);
+    // 前站半成品可用量 = 前站累計產出 - 本站自前站實領消耗量
+    const avail = Math.max(0, fTotalOut - feederConsumed);
 
     feederDetails.push({
       station: fSt,

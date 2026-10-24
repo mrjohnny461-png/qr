@@ -513,7 +513,7 @@ let hasRawPart = urlParams.get("has_raw") === "1" || urlParams.get("has_raw") ==
 let rawPartName = (urlParams.get("raw_name") || "").trim();
 let rawInitCount = parseInt(urlParams.get("raw_init") || "0", 10);
 
-// 📦 取得前置半成品初始備料 (主要用於下游工站)
+// 📦 取得每件所需前置半成品套數 (預設每做 1 件需消耗前置半成品 1 套，開局庫存由 0 起算)
 let subInitCount = parseInt(urlParams.get("sub_init") || "", 10);
 if (isNaN(subInitCount)) {
   try {
@@ -525,7 +525,7 @@ if (isNaN(subInitCount)) {
     }
   } catch (e) {}
 }
-if (isNaN(subInitCount)) subInitCount = 4;
+if (isNaN(subInitCount) || subInitCount <= 0) subInitCount = 1;
 
 if (!hasRawPart) {
   try {
@@ -730,17 +730,8 @@ async function fetchWipData() {
     wipRecordId = data[0].id;
     manualBufferWip = data[0].input_wip || 0;
     currentOutWip = data[0].output_wip || 0;
-    // 若為後續工站且尚未開工 (currentOutWip === 0) 且 input_wip === 0，自動以 subInitCount 賦值
-    if (!isRootStation && manualBufferWip === 0 && currentOutWip === 0 && subInitCount > 0) {
-      manualBufferWip = subInitCount;
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: subInitCount, updated_at: new Date().toISOString() })
-      });
-    }
   } else {
-    const initialInput = isRootStation ? 0 : (subInitCount || 4);
+    const initialInput = 0;
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
       method: "POST",
       headers: {
@@ -810,11 +801,11 @@ async function computeKitting() {
   });
 
   // 本站累計已完工/開工總件數
+  const reqPerPiece = Math.max(1, subInitCount || 1);
   const totalProducedOrWorking = currentOutWip + (isWorking ? 1 : 0);
-  // 計算本站已自「自體預發備料 / 初始備料」中消耗的件數
-  const manualConsumed = Math.max(0, (subInitCount || 0) - manualBufferWip);
-  // 真正自前置工站 (Feeder) 領取的消耗件數 (排除自體備料負擔，防止雙重扣減)
-  const feederConsumed = Math.max(0, totalProducedOrWorking - manualConsumed);
+  // 手動補充備料剩餘可用數 與 實際自前置工站領取之消耗量 (絕不雙重扣減)
+  const remainingManualBuffer = Math.max(0, manualBufferWip - totalProducedOrWorking);
+  const feederConsumed = Math.max(0, totalProducedOrWorking - manualBufferWip) * reqPerPiece;
 
   feederDetails = [];
   let minFeederAvail = 999999;
@@ -823,8 +814,8 @@ async function computeKitting() {
     const fWip = wipMap[fSt] || { output_wip: 0 };
     const fTotalOut = fWip.output_wip || 0;
     
-    // 前站半成品可用量 = 前站累計產出 - 本站自前站實領消耗量
-    const avail = Math.max(0, fTotalOut - feederConsumed);
+    // 前站半成品可用套數 = floor((前站累計產出 - 本站自前站實領消耗量) / 每件需求套數)
+    const avail = Math.floor(Math.max(0, fTotalOut - feederConsumed) / reqPerPiece);
 
     feederDetails.push({
       station: fSt,
@@ -839,8 +830,8 @@ async function computeKitting() {
   const feederKit = feederStations.length > 0 ? (minFeederAvail === 999999 ? 0 : minFeederAvail) : 0;
 
   // 🌟 萬能齊套 (Option 2)：
-  // 1. 組件可用套數 = 前站半成品送達數 (feederKit) + 現場預發組件備料 (manualBufferWip)
-  const totalSubassembly = feederKit + manualBufferWip;
+  // 1. 組件可用套數 = 前站半成品送達套數 (feederKit) + 剩餘手動補充備料 (remainingManualBuffer)
+  const totalSubassembly = feederKit + remainingManualBuffer;
 
   // 2. 若為混合工站 (有前站 + 含原生零件)：需同時滿足「組件套數」與「原生零件庫存」
   if (isMixedStation()) {
@@ -1457,8 +1448,8 @@ async function handleFinishWork(source = "SCAN") {
   const nextOut = currentOutWip + 1;
 
   try {
-    // 1. 本站完工數 + 1；若現場預發半成品組件備料大於 0，完工實體扣減 1 件 (input_wip - 1)
-    const nextIn = isRootStation ? 0 : Math.max(0, manualBufferWip - 1);
+    // 1. 本站完工數 + 1；保留 manualBufferWip 作為手動補充總數，由 currentOutWip 單一扣減，徹底防止雙重扣減
+    const nextIn = isRootStation ? 0 : manualBufferWip;
     await updateWipDb(nextIn, nextOut);
 
     // 2. 若為混合工站，扣減 1 顆原生零件 (rawPartStock - 1)

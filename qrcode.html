@@ -445,7 +445,7 @@
               需前置工站：${preds.length > 0 ? preds.join(" + ") : "前站"}
             </div>
             <div style="display:flex; align-items:center; gap:6px; background:#fffbeb; padding:6px 8px; border-radius:6px; border:1px solid #fef08a;">
-              <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 強制前置半成品備料：</span>
+              <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 強制設定需要多少半成品：</span>
               <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:0 4px;">
                 <input type="number" class="station-sub-init" data-station="${st}" value="${subInitVal}" min="0" ${isLocked ? 'readonly' : ''} style="border:none; outline:none; width:36px; padding:2px 0; font-size:12px; text-align:right; font-weight:bold; color:#1e40af; background:${isLocked ? '#e2e8f0' : '#fff'};">
                 <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:2px;">套</span>
@@ -660,7 +660,7 @@
       params.set("is_root", "1");
       rawTagHtml = ` <span style='font-size:12px; color:#15803d; background:#dcfce7; border:1px solid #86efac; padding:2px 8px; border-radius:6px; font-weight:bold;'>🏁 起始工站 ｜ 🟢 原料無限供應 ∞</span>`;
     } else {
-      const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 4;
+      const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 1;
       params.set("sub_init", subInit);
       const hasRaw = !!(rawCfg.hasRaw || (rawCfg.rawInit && rawCfg.rawInit > 0));
       if (hasRaw) {
@@ -670,7 +670,7 @@
           params.set("raw_init", rawCfg.rawInit);
         }
       }
-      rawTagHtml = ` <span style='font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:2px 8px; border-radius:6px; font-weight:bold;'>📦 前置半成品備料: ${subInit}套${hasRaw && rawCfg.rawName ? ` ｜ ${rawCfg.rawName}: ${rawCfg.rawInit || 0}顆` : ''}</span>`;
+      rawTagHtml = ` <span style='font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:2px 8px; border-radius:6px; font-weight:bold;'>📦 每件需前置半成品: ${subInit}套${hasRaw && rawCfg.rawName ? ` ｜ ${rawCfg.rawName}: ${rawCfg.rawInit || 0}顆` : ''}</span>`;
     }
 
     currentFullUrl = `${FIXED_BASE_URL}?${params.toString()}`;
@@ -746,7 +746,7 @@
         params.set("is_root", "1");
         tagHtml = `<div style="font-size:11px; font-weight:bold; color:#15803d; background:#dcfce7; border:1px solid #86efac; padding:3px 6px; border-radius:4px; margin-bottom:6px;">🏁 起始工站 ｜ 🟢 原料無限供應 ∞</div>`;
       } else {
-        const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 4;
+        const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 1;
         params.set("sub_init", subInit);
         const hasRaw = !!(rawCfg.hasRaw || (rawCfg.rawInit && rawCfg.rawInit > 0));
         if (hasRaw) {
@@ -756,7 +756,7 @@
             params.set("raw_init", rawCfg.rawInit);
           }
         }
-        tagHtml = `<div style="font-size:11px; font-weight:bold; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:3px 6px; border-radius:4px; margin-bottom:6px;">📦 前置半成品備料: ${subInit} 套${hasRaw && rawCfg.rawName ? `<br>＋ ${rawCfg.rawName}: ${rawCfg.rawInit || 0} 顆` : ''}</div>`;
+        tagHtml = `<div style="font-size:11px; font-weight:bold; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:3px 6px; border-radius:4px; margin-bottom:6px;">📦 每件需前置半成品: ${subInit} 套${hasRaw && rawCfg.rawName ? `<br>＋ ${rawCfg.rawName}: ${rawCfg.rawInit || 0} 顆` : ''}</div>`;
       }
 
       const url = `${FIXED_BASE_URL}?${params.toString()}`;

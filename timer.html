@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
@@ -440,8 +440,8 @@
         <span>📷 相機 QR 碼掃描</span>
         <span class="scan-badge" id="scanStatusBadge">鏡頭未啟動</span>
       </div>
-      <button type="button" onclick="testAudioSound()" id="btnTestAudio" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer;" title="暺?皜祈岫?內?單?">?? ?單?皜祈岫</button>
-      <button type="button" onclick="openCooldownModal()" id="btnOpenCooldown" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer;">⚙️ 防呆: <span id="cooldownBadge">3</span>s</button>
+      <button type="button" onclick="testAudioSound()" id="btnTestAudio" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer; font-weight:bold;" title="點擊測試到料提示音">🔊 測試提示音</button>
+      <button type="button" onclick="openCooldownModal()" id="btnOpenCooldown" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer; font-weight:bold;" title="設定開工防呆與掃描完工後冷卻秒數">⚙️ 開工防呆:<span id="cooldownBadge">3</span>s｜完工冷卻:<span id="finishCooldownBadge">3</span>s</button>
       <button class="btn-scanner-toggle" id="btnToggleScanner" type="button">
         ▶ 開啟相機
       </button>
@@ -513,7 +513,7 @@ let hasRawPart = urlParams.get("has_raw") === "1" || urlParams.get("has_raw") ==
 let rawPartName = (urlParams.get("raw_name") || "").trim();
 let rawInitCount = parseInt(urlParams.get("raw_init") || "0", 10);
 
-// 📦 取得每件所需前置半成品套數 (預設每做 1 件需消耗前置半成品 1 套，開局庫存由 0 起算)
+// 📦 取得站前半成品初始備料套數 (選填，可為 0 或任意正整數)
 let subInitCount = parseInt(urlParams.get("sub_init") || "", 10);
 if (isNaN(subInitCount)) {
   try {
@@ -521,11 +521,11 @@ if (isNaN(subInitCount)) {
     const groupRaw = allRaw[groupId] || {};
     const stRaw = groupRaw[stationId] || {};
     if (stRaw.subInit !== undefined && stRaw.subInit !== null) {
-      subInitCount = stRaw.subInit;
+      subInitCount = parseInt(stRaw.subInit, 10);
     }
   } catch (e) {}
 }
-if (isNaN(subInitCount) || subInitCount <= 0) subInitCount = 1;
+if (isNaN(subInitCount) || subInitCount < 0) subInitCount = 0;
 
 if (!hasRawPart) {
   try {
@@ -552,8 +552,11 @@ if (hasRawPart) {
 
 // 🎯 實作輪次控制與防呆秒數
 let currentSystemMode = "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (評分)
-let currentCooldownSec = 3;     // 掃描防呆冷卻秒數 (1~5 秒)
-let prevKitCount = null;        // 前次齊套數，用於偵測 0 -> >=1 觸發聲光提示
+let currentCooldownSec = 3;     // 開工後防呆鎖定秒數 (1~5 秒)
+let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "3", 10) || 3; // 掃描完工後冷卻秒數 (1~5 秒)
+let prevKitCount = null;        // 前次齊套數，用於偵測料到瞬間立即觸發提示音
+let pendingMaterialChime = false; // 若料到時瀏覽器音效尚未解鎖，解鎖瞬間立即補響
+let lastMaterialChimeTime = 0;  // 上次料到提示音時間戳 (用於待命期間定期提醒)
 let overtimeAlertPlayed = false;// 超時 5 分鐘警示防呆
 
 // 自動以完工數產生序號 (如 TEST-P01 或 P01)
@@ -604,6 +607,9 @@ function updateModeBadgeUI() {
 function updateCooldownBadgeUI() {
   const cb = document.getElementById("cooldownBadge");
   if (cb) cb.textContent = currentCooldownSec;
+  const fcb = document.getElementById("finishCooldownBadge");
+  if (fcb) fcb.textContent = currentFinishCooldownSec;
+
   for (let i = 1; i <= 5; i++) {
     const btn = document.getElementById(`cdBtn_${i}`);
     if (btn) {
@@ -615,6 +621,18 @@ function updateCooldownBadgeUI() {
         btn.style.background = "#fff";
         btn.style.color = "#1e293b";
         btn.style.borderColor = "#cbd5e1";
+      }
+    }
+    const fbtn = document.getElementById(`fcdBtn_${i}`);
+    if (fbtn) {
+      if (i === currentFinishCooldownSec) {
+        fbtn.style.background = "#059669";
+        fbtn.style.color = "#fff";
+        fbtn.style.borderColor = "#047857";
+      } else {
+        fbtn.style.background = "#fff";
+        fbtn.style.color = "#1e293b";
+        fbtn.style.borderColor = "#cbd5e1";
       }
     }
   }
@@ -646,7 +664,16 @@ async function setTimerCooldown(sec) {
       body: JSON.stringify({ output_wip: sec, updated_at: new Date().toISOString() })
     });
   } catch(e) {}
-  showScanBanner(`🛡️ 掃碼防呆冷卻時間已設定為 ${sec} 秒`, "success", 2000);
+  showScanBanner(`🛡️ 開工後防呆鎖定時間已設定為 ${sec} 秒`, "success", 2000);
+}
+
+function setFinishCooldown(sec) {
+  currentFinishCooldownSec = sec;
+  try {
+    localStorage.setItem("ie_chair_finish_cooldown_sec", String(sec));
+  } catch(e) {}
+  updateCooldownBadgeUI();
+  showScanBanner(`⏳ 掃描完工後冷卻時間已設定為 ${sec} 秒`, "success", 2000);
 }
 
 // 初始化
@@ -730,8 +757,16 @@ async function fetchWipData() {
     wipRecordId = data[0].id;
     manualBufferWip = data[0].input_wip || 0;
     currentOutWip = data[0].output_wip || 0;
+    if (!isRootStation && manualBufferWip === 0 && currentOutWip === 0 && subInitCount > 0) {
+      manualBufferWip = subInitCount;
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: subInitCount, updated_at: new Date().toISOString() })
+      });
+    }
   } else {
-    const initialInput = 0;
+    const initialInput = isRootStation ? 0 : subInitCount;
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
       method: "POST",
       headers: {
@@ -788,7 +823,6 @@ async function computeKitting() {
     return;
   }
 
-
   // 抓取全組 station_wip
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&select=*`,
@@ -801,11 +835,10 @@ async function computeKitting() {
   });
 
   // 本站累計已完工/開工總件數
-  const reqPerPiece = Math.max(1, subInitCount || 1);
   const totalProducedOrWorking = currentOutWip + (isWorking ? 1 : 0);
-  // 手動補充備料剩餘可用數 與 實際自前置工站領取之消耗量 (絕不雙重扣減)
+  // 站前初始/手動備料剩餘可用數 與 實際自前置工站領取之消耗量 (絕不雙重扣減)
   const remainingManualBuffer = Math.max(0, manualBufferWip - totalProducedOrWorking);
-  const feederConsumed = Math.max(0, totalProducedOrWorking - manualBufferWip) * reqPerPiece;
+  const feederConsumed = Math.max(0, totalProducedOrWorking - manualBufferWip);
 
   feederDetails = [];
   let minFeederAvail = 999999;
@@ -814,8 +847,8 @@ async function computeKitting() {
     const fWip = wipMap[fSt] || { output_wip: 0 };
     const fTotalOut = fWip.output_wip || 0;
     
-    // 前站半成品可用套數 = floor((前站累計產出 - 本站自前站實領消耗量) / 每件需求套數)
-    const avail = Math.floor(Math.max(0, fTotalOut - feederConsumed) / reqPerPiece);
+    // 前站半成品可用套數 = 前站累計產出 - 本站自前站實領消耗量
+    const avail = Math.max(0, fTotalOut - feederConsumed);
 
     feederDetails.push({
       station: fSt,
@@ -830,7 +863,7 @@ async function computeKitting() {
   const feederKit = feederStations.length > 0 ? (minFeederAvail === 999999 ? 0 : minFeederAvail) : 0;
 
   // 🌟 萬能齊套 (Option 2)：
-  // 1. 組件可用套數 = 前站半成品送達套數 (feederKit) + 剩餘手動補充備料 (remainingManualBuffer)
+  // 1. 組件可用套數 = 前站半成品送達套數 (feederKit) + 剩餘初始/手動備料 (remainingManualBuffer)
   const totalSubassembly = feederKit + remainingManualBuffer;
 
   // 2. 若為混合工站 (有前站 + 含原生零件)：需同時滿足「組件套數」與「原生零件庫存」
@@ -845,11 +878,20 @@ async function computeKitting() {
   window.currentFeederKit = feederKit;
   window.currentTotalSub = totalSubassembly;
 
-  const becameReady = (prevKitCount === null || prevKitCount === 0) && kitCount > 0 && !isWorking;
+  // 🔔 只要料到（齊套數由無變有，或有新半成品送達使齊套數增加），立即觸發「叮咚～」聲光提示！
+  const materialArrived = (prevKitCount === null && kitCount > 0) || (prevKitCount !== null && kitCount > prevKitCount);
   prevKitCount = kitCount;
-  if (becameReady) {
-    alertMaterialReady();
-    showScanBanner("🔔 前站物料已送達（條件符合開工）！請掃描 QR Code 開始作業！", "success", 4000);
+
+  if (!isWorking && kitCount > 0) {
+    if (materialArrived) {
+      alertMaterialReady();
+      showScanBanner(`🔔 前站物料已送達（目前可開工：${kitCount} 套）！請掃描 QR Code 開始作業！`, "success", 4000);
+    } else if (pendingMaterialChime || (!isRootStation && (Date.now() - lastMaterialChimeTime) >= 6000)) {
+      // 若先前因瀏覽器尚未解鎖未響，或後續工站料已到齊但超過 6 秒尚未掃碼開工，持續自動響音提醒
+      alertMaterialReady();
+    }
+  } else if (isWorking || kitCount <= 0) {
+    pendingMaterialChime = false;
   }
 
   refreshUiNumbers();
@@ -1107,9 +1149,63 @@ let lastDecodedText = "";
 let lastDecodedTime = 0;
 
 // ==========================================
-// 🔊 Web Audio API 全局音效引擎 (含手機瀏覽器解鎖與音量強化)
+// 🔊 雙引擎全局音效系統 (Web Audio API + 內建 WAV 音訊保底，確保料到立即響音)
 // ==========================================
 let sharedAudioCtx = null;
+let dingDongWavAudio = null;
+let keepAliveStarted = false;
+
+// 動態合成「叮～咚～」雙音和弦 (659.25Hz E5 -> 880Hz A5) PCM WAV Data URI，突破背景計時限制
+function createDingDongWavUrl() {
+  try {
+    const sampleRate = 22050;
+    const duration = 0.65;
+    const numSamples = Math.floor(sampleRate * duration);
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, numSamples * 2, true);
+
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / sampleRate;
+      let sample = 0;
+      if (t < 0.35) {
+        const env1 = Math.exp(-t * 8);
+        sample += Math.sin(2 * Math.PI * 659.25 * t) * env1 * 0.55;
+      }
+      if (t >= 0.16) {
+        const t2 = t - 0.16;
+        const env2 = Math.exp(-t2 * 5.5);
+        sample += Math.sin(2 * Math.PI * 880.0 * t2) * env2 * 0.65;
+      }
+      sample = Math.max(-1, Math.min(1, sample));
+      view.setInt16(44 + i * 2, sample * 32767, true);
+    }
+
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return "data:audio/wav;base64," + btoa(binary);
+  } catch (e) {
+    return null;
+  }
+}
 
 function getAudioContext() {
   try {
@@ -1121,26 +1217,53 @@ function getAudioContext() {
     if (sharedAudioCtx.state === 'suspended') {
       sharedAudioCtx.resume().catch(() => {});
     }
+    if (sharedAudioCtx.state === 'running' && !keepAliveStarted) {
+      keepAliveStarted = true;
+      try {
+        // 極微小常駐訊號防止行動裝置瀏覽器在等待前站送料期間自動休眠音效引擎
+        const osc = sharedAudioCtx.createOscillator();
+        const gain = sharedAudioCtx.createGain();
+        gain.gain.value = 0.00001;
+        osc.connect(gain);
+        gain.connect(sharedAudioCtx.destination);
+        osc.start();
+      } catch(e) {}
+    }
     return sharedAudioCtx;
   } catch (e) {
     return null;
   }
 }
 
-// 🌟 點擊/觸控螢幕任一處立即解鎖手機瀏覽器音效播放限制
-['touchstart', 'touchend', 'pointerdown', 'mousedown', 'click'].forEach(evt => {
-  window.addEventListener(evt, () => {
-    const ctx = getAudioContext();
-    if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+function unlockAudioEngine() {
+  const ctx = getAudioContext();
+  if (ctx) {
+    ctx.resume().then(() => {
+      if (pendingMaterialChime && !isWorking && kitCount > 0) {
+        pendingMaterialChime = false;
+        playDingDongSound();
+      }
+    }).catch(() => {});
+  }
+  if (!dingDongWavAudio) {
+    const url = createDingDongWavUrl();
+    if (url) {
+      dingDongWavAudio = new Audio(url);
+      dingDongWavAudio.volume = 1.0;
     }
-  }, { capture: true, passive: true });
+  }
+}
+
+// 🌟 點擊/觸控螢幕任一處或開啟相機時立即解鎖音效，若當下已有料則立即補響
+['touchstart', 'touchend', 'pointerdown', 'mousedown', 'click', 'keydown'].forEach(evt => {
+  window.addEventListener(evt, unlockAudioEngine, { capture: true, passive: true });
 });
 
 // 手動音效測試
 function testAudioSound() {
+  unlockAudioEngine();
   playDingDongSound();
-  showScanBanner("🔊 提示音效播放測試 (若無聲請確認手機未開靜音模式)", "info", 2500);
+  showScanBanner("🔊 到料提示音播放測試（叮咚～）", "info", 2500);
 }
 
 // Web Audio API 提示音效 (START / FINISH / WARNING)
@@ -1190,47 +1313,73 @@ async function playAudioFeedback(type) {
   }
 }
 
-// 清脆悅耳的「叮咚～」上升和弦音效 (料足開工提示)
+// 清脆悅耳的「叮咚～」上升和弦音效 (料到立即響音提示)
 async function playDingDongSound() {
+  lastMaterialChimeTime = Date.now();
+  let playedViaWebAudio = false;
   try {
     const ctx = getAudioContext();
-    if (!ctx) return;
-    if (ctx.state === 'suspended') {
-      await ctx.resume().catch(() => {});
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => {});
+      }
+      if (ctx.state === 'running') {
+        const now = ctx.currentTime;
+        // 音符 1: E5 (659.25Hz)
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(659.25, now);
+        gain1.gain.setValueAtTime(0.8, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.35);
+
+        // 音符 2: A5 (880Hz) 叮～咚～
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = "sine";
+        osc2.frequency.setValueAtTime(880, now + 0.18);
+        gain2.gain.setValueAtTime(0.85, now + 0.18);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start(now + 0.18);
+        osc2.stop(now + 0.65);
+        playedViaWebAudio = true;
+        pendingMaterialChime = false;
+      }
     }
-
-    const now = ctx.currentTime;
-    // 音符 1: E5 (659.25Hz)
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = "sine";
-    osc1.frequency.setValueAtTime(659.25, now);
-    gain1.gain.setValueAtTime(0.7, now);
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.35);
-
-    // 音符 2: A5 (880Hz) 叮～咚～
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = "sine";
-    osc2.frequency.setValueAtTime(880, now + 0.18);
-    gain2.gain.setValueAtTime(0.75, now + 0.18);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.18);
-    osc2.stop(now + 0.65);
   } catch (e) {
-    console.warn("DingDong sound error:", e);
+    console.warn("DingDong WebAudio error:", e);
+  }
+
+  // 若 WebAudio 尚未處於 running 狀態，立即使用內建 WAV Audio 播放；若仍被瀏覽器攔截則標記 pendingMaterialChime
+  if (!playedViaWebAudio) {
+    try {
+      if (!dingDongWavAudio) {
+        const url = createDingDongWavUrl();
+        if (url) dingDongWavAudio = new Audio(url);
+      }
+      if (dingDongWavAudio) {
+        dingDongWavAudio.currentTime = 0;
+        await dingDongWavAudio.play();
+        pendingMaterialChime = false;
+      } else {
+        pendingMaterialChime = true;
+      }
+    } catch (err) {
+      pendingMaterialChime = true;
+    }
   }
 }
 
-// 🔔 料足聲光與震動提示 (新物料齊套瞬間觸發強烈脈衝)
+// 🔔 料足聲光與震動提示 (新物料齊套瞬間觸發強烈脈衝與呼吸燈)
 function alertMaterialReady() {
   playDingDongSound();
+  updateBreathingLight();
   try {
     if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 300]);
   } catch(e) {}
@@ -1485,11 +1634,11 @@ async function handleFinishWork(source = "SCAN") {
     document.getElementById("timerDisplay").textContent = "00:00.0";
     await computeKitting();
 
-    // 5. 設定完工冷卻期 2.5 秒 (防止條碼尚未移開鏡頭造成立即重開工)
-    scanCooldownUntil = Date.now() + 2500;
+    // 5. 設定掃描完工後冷卻期 (依使用者設定之 currentFinishCooldownSec 秒數，防止條碼未移開重複開工)
+    scanCooldownUntil = Date.now() + (currentFinishCooldownSec * 1000);
 
     playAudioFeedback("FINISH");
-    const finishMsg = `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒`;
+    const finishMsg = `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒 (冷卻 ${currentFinishCooldownSec}s)`;
     showMsg(finishMsg, "#10b981");
     showScanBanner(finishMsg, "success", 3000);
     updateScannerBadge();
@@ -1497,7 +1646,7 @@ async function handleFinishWork(source = "SCAN") {
     // 冷卻期結束自動恢復待命狀態
     setTimeout(() => {
       updateScannerBadge();
-    }, 2600);
+    }, (currentFinishCooldownSec * 1000) + 100);
 
   } catch (err) {
     showMsg("存檔失敗：" + err.message, "#ef4444");
@@ -1608,6 +1757,7 @@ async function restartCameraScanner(silent = false) {
 
     isScannerRunning = true;
     scannerWasActiveBeforeHidden = true;
+    unlockAudioEngine();
     if (viewportBox) viewportBox.style.display = "block";
     const btn = document.getElementById("btnToggleScanner");
     if (btn) {
@@ -1939,20 +2089,39 @@ function showMsg(text, color) {
 
 init();
 </script>
-  <!-- 彈跳視窗：掃碼防呆冷卻秒數設定 -->
+  <!-- 彈跳視窗：開工防呆與掃描完工後冷卻秒數設定 -->
   <div id="cooldownModal" style="display:none; position:fixed; z-index:999; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(2px); align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:14px; max-width:320px; width:90%; padding:20px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2); margin:80px auto;">
-      <h3 style="margin-top:0;">🛡️ 掃描防呆冷卻時間</h3>
-      <p style="font-size:13px; color:#64748b; margin-bottom:15px;">
-        開工後未滿此秒數禁止完工，避免秒開秒關或連掃失誤。
-      </p>
-      <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px; margin-bottom:20px;">
-        <button type="button" class="cd-btn" onclick="setTimerCooldown(1)" id="cdBtn_1" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">1s</button>
-        <button type="button" class="cd-btn" onclick="setTimerCooldown(2)" id="cdBtn_2" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">2s</button>
-        <button type="button" class="cd-btn" onclick="setTimerCooldown(3)" id="cdBtn_3" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">3s</button>
-        <button type="button" class="cd-btn" onclick="setTimerCooldown(4)" id="cdBtn_4" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">4s</button>
-        <button type="button" class="cd-btn" onclick="setTimerCooldown(5)" id="cdBtn_5" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">5s</button>
+    <div style="background:#fff; border-radius:14px; max-width:360px; width:92%; padding:20px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2); margin:60px auto;">
+      <h3 style="margin-top:0; margin-bottom:12px;">⚙️ 掃碼防呆與完工冷卻設定</h3>
+
+      <div style="text-align:left; background:#f8fafc; padding:12px; border-radius:10px; border:1px solid #e2e8f0; margin-bottom:14px;">
+        <div style="font-size:13px; font-weight:bold; color:#1e40af; margin-bottom:4px;">🛡️ 1. 開工後防呆鎖定時間</div>
+        <div style="font-size:12px; color:#64748b; margin-bottom:10px;">
+          掃碼開工後，未滿此秒數禁止完工（避免秒開秒關誤觸）。
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px;">
+          <button type="button" class="cd-btn" onclick="setTimerCooldown(1)" id="cdBtn_1" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">1s</button>
+          <button type="button" class="cd-btn" onclick="setTimerCooldown(2)" id="cdBtn_2" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">2s</button>
+          <button type="button" class="cd-btn" onclick="setTimerCooldown(3)" id="cdBtn_3" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">3s</button>
+          <button type="button" class="cd-btn" onclick="setTimerCooldown(4)" id="cdBtn_4" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">4s</button>
+          <button type="button" class="cd-btn" onclick="setTimerCooldown(5)" id="cdBtn_5" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">5s</button>
+        </div>
       </div>
+
+      <div style="text-align:left; background:#f0fdf4; padding:12px; border-radius:10px; border:1px solid #bbf7d0; margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:bold; color:#065f46; margin-bottom:4px;">⏳ 2. 掃描完工後冷卻時間</div>
+        <div style="font-size:12px; color:#64748b; margin-bottom:10px;">
+          掃碼完工後，需間隔此秒數才允許掃描下一件開工（防止條碼未移開重複開工）。
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px;">
+          <button type="button" class="fcd-btn" onclick="setFinishCooldown(1)" id="fcdBtn_1" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">1s</button>
+          <button type="button" class="fcd-btn" onclick="setFinishCooldown(2)" id="fcdBtn_2" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">2s</button>
+          <button type="button" class="fcd-btn" onclick="setFinishCooldown(3)" id="fcdBtn_3" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">3s</button>
+          <button type="button" class="fcd-btn" onclick="setFinishCooldown(4)" id="fcdBtn_4" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">4s</button>
+          <button type="button" class="fcd-btn" onclick="setFinishCooldown(5)" id="fcdBtn_5" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">5s</button>
+        </div>
+      </div>
+
       <button type="button" onclick="closeCooldownModal()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#2563eb; color:#fff; font-weight:bold; cursor:pointer;">
         確定
       </button>

@@ -570,7 +570,7 @@ function resetAutoLock() {
 }
 
 function unlockAdmin() {
-  const pin = prompt("🔐 請輸入管理員密碼（預設密碼為 1688）：");
+  const pin = prompt("🔐 請輸入管理員密碼：");
   if (pin === null) return;
   if (pin.trim() === getAdminPin()) {
     isAdminLoggedIn = true;

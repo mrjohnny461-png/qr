@@ -312,11 +312,29 @@
 
   <!-- 工站資訊 -->
   <div class="card">
-    <div class="header-bar">
-      <div>
+    <div class="header-bar" style="flex-wrap:wrap; gap:6px;">
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <span class="badge" id="groupBadge">--</span>
         <span class="badge" id="stationBadge">--</span>
-        <span class="badge" id="modeBadge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-weight:bold;">🧪 測試練習</span>
+        <span class="badge" id="modeBadge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-weight:bold;">🧪 第 1 次測試</span>
+        <!-- 🧪 學生可直接選擇第 1~10 次測試並確認 -->
+        <span id="timerTestRoundBox" style="display:inline-flex; align-items:center; gap:4px; background:#faf5ff; padding:2px 6px; border-radius:6px; border:1px solid #d8b4fe;">
+          <select id="timerTestRoundSelect" style="padding:2px 4px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
+            <option value="1">第 1 次測試</option>
+            <option value="2">第 2 次測試</option>
+            <option value="3">第 3 次測試</option>
+            <option value="4">第 4 次測試</option>
+            <option value="5">第 5 次測試</option>
+            <option value="6">第 6 次測試</option>
+            <option value="7">第 7 次測試</option>
+            <option value="8">第 8 次測試</option>
+            <option value="9">第 9 次測試</option>
+            <option value="10">第 10 次測試</option>
+          </select>
+          <button type="button" id="btnConfirmTimerTestRound" onclick="confirmTimerTestRound()" style="padding:2px 8px; font-size:11px; font-weight:bold; border-radius:4px; border:1px solid #7e22ce; background:#9333ea; color:#fff; cursor:pointer;">
+            ✅ 確認
+          </button>
+        </span>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="sync-status"><span class="pulse-dot"></span>即時同步中</span>
@@ -441,7 +459,7 @@
         <span class="scan-badge" id="scanStatusBadge">鏡頭未啟動</span>
       </div>
       <button type="button" onclick="testAudioSound()" id="btnTestAudio" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer; font-weight:bold;" title="點擊測試到料提示音">🔊 測試提示音</button>
-      <button type="button" onclick="openCooldownModal()" id="btnOpenCooldown" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer; font-weight:bold;" title="設定開工防呆與掃描完工後冷卻秒數">⚙️ 開工防呆:<span id="cooldownBadge">3</span>s｜完工冷卻:<span id="finishCooldownBadge">3</span>s</button>
+      <span id="cooldownReadonlyBadge" style="padding:4px 8px; font-size:12px; border-radius:6px; border:1px solid #cbd5e1; background:#f8fafc; color:#475569; font-weight:bold; display:inline-flex; align-items:center; gap:4px; user-select:none;" title="防呆與冷卻時間由監控中心【管理員區】統一設定，僅管理員可更改">🔒 開工防呆:<span id="cooldownBadge">3</span>s｜完工間隔:<span id="finishCooldownBadge">4</span>s</span>
       <button class="btn-scanner-toggle" id="btnToggleScanner" type="button">
         ▶ 開啟相機
       </button>
@@ -550,19 +568,57 @@ if (hasRawPart) {
   }
 }
 
-// 🎯 實作輪次控制與防呆秒數
+// 🎯 實作輪次控制 (支援第 1~10 次測試) 與防呆/完工間隔秒數 (由管理員於監控中心設定)
 let currentSystemMode = "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (評分)
-let currentCooldownSec = 3;     // 開工後防呆鎖定秒數 (1~5 秒)
-let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "3", 10) || 3; // 掃描完工後冷卻秒數 (1~5 秒)
+let currentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1; // 1~10 次測試
+let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工後防呆鎖定秒數 (1~5 秒)
+let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 掃描完工後冷卻暨起始站第2件起提示間隔秒數 (預設 4 秒，即 3~5 秒)
 let prevKitCount = null;        // 前次齊套數，用於偵測料到瞬間立即觸發提示音
 let pendingMaterialChime = false; // 若料到時瀏覽器音效尚未解鎖，解鎖瞬間立即補響
 let lastMaterialChimeTime = 0;  // 上次料到提示音時間戳 (用於待命期間定期提醒)
+let rootWaitingNextChime = false; // 起始站第2件起，等待完工後 3~5 秒間隔結束再發出到料提示音
 let overtimeAlertPlayed = false;// 超時 5 分鐘警示防呆
 
-// 自動以完工數產生序號 (如 TEST-P01 或 P01)
+// 編碼與解碼 SYSTEM_MODE 雲端欄位
+function encodeSystemModeInput(modeStr, round) {
+  return modeStr === "OFFICIAL" ? 1 : (100 + Math.min(10, Math.max(1, parseInt(round, 10) || 1)));
+}
+function decodeSystemModeInput(val) {
+  const n = parseInt(val, 10) || 0;
+  if (n === 1) return { mode: "OFFICIAL", round: currentTestRound };
+  if (n >= 101 && n <= 110) return { mode: "TEST", round: n - 100 };
+  return { mode: "TEST", round: 1 };
+}
+function encodeSystemCooldownOutput(startCd, finishCd) {
+  const s = Math.min(5, Math.max(1, parseInt(startCd, 10) || 3));
+  const f = Math.min(5, Math.max(1, parseInt(finishCd, 10) || 4));
+  return s * 100 + f;
+}
+function decodeSystemCooldownOutput(val) {
+  const n = parseInt(val, 10) || 304;
+  if (n >= 100) {
+    const s = Math.min(5, Math.max(1, Math.floor(n / 100)));
+    const f = Math.min(5, Math.max(1, n % 100));
+    return { startCd: s, finishCd: f };
+  }
+  return { startCd: Math.min(5, Math.max(1, n)), finishCd: currentFinishCooldownSec || 4 };
+}
+
+function isTestProductId(pid) {
+  return (pid || "").trim().toUpperCase().startsWith("TEST");
+}
+function getTestRoundFromProductId(pid) {
+  const s = (pid || "").trim().toUpperCase();
+  const m = s.match(/^TEST(\d+)-/);
+  if (m) return parseInt(m[1], 10);
+  if (s.startsWith("TEST-")) return 1;
+  return null;
+}
+
+// 自動以當前模式與測試組數產生序號 (如 TEST1-P01 ~ TEST10-P01 或 P01)
 function getCurProductCode() {
   const seq = String(currentOutWip + 1).padStart(2, '0');
-  return currentSystemMode === "TEST" ? `TEST-P${seq}` : `P${seq}`;
+  return currentSystemMode === "TEST" ? `TEST${currentTestRound}-P${seq}` : `P${seq}`;
 }
 
 let isRootStation = false;     // 是否為起點工站 (前無工作站)
@@ -590,18 +646,26 @@ let timerInterval = null;
 
 function updateModeBadgeUI() {
   const mb = document.getElementById("modeBadge");
+  const trBox = document.getElementById("timerTestRoundBox");
+  const trSelect = document.getElementById("timerTestRoundSelect");
+  if (trSelect && document.activeElement !== trSelect) {
+    trSelect.value = String(currentTestRound);
+  }
   if (!mb) return;
   if (currentSystemMode === "OFFICIAL") {
     mb.innerHTML = "🏆 正式實作";
     mb.style.background = "#fef3c7";
     mb.style.color = "#b45309";
     mb.style.borderColor = "#fde68a";
+    if (trBox) trBox.style.display = "none";
   } else {
-    mb.innerHTML = "🧪 測試練習";
+    mb.innerHTML = `🧪 第 ${currentTestRound} 次測試`;
     mb.style.background = "#f3e8ff";
     mb.style.color = "#7e22ce";
     mb.style.borderColor = "#d8b4fe";
+    if (trBox) trBox.style.display = "inline-flex";
   }
+  if (typeof updateAudioButtonLabel === "function") updateAudioButtonLabel();
 }
 
 function updateCooldownBadgeUI() {
@@ -609,71 +673,76 @@ function updateCooldownBadgeUI() {
   if (cb) cb.textContent = currentCooldownSec;
   const fcb = document.getElementById("finishCooldownBadge");
   if (fcb) fcb.textContent = currentFinishCooldownSec;
+}
 
-  for (let i = 1; i <= 5; i++) {
-    const btn = document.getElementById(`cdBtn_${i}`);
-    if (btn) {
-      if (i === currentCooldownSec) {
-        btn.style.background = "#2563eb";
-        btn.style.color = "#fff";
-        btn.style.borderColor = "#1d4ed8";
-      } else {
-        btn.style.background = "#fff";
-        btn.style.color = "#1e293b";
-        btn.style.borderColor = "#cbd5e1";
-      }
-    }
-    const fbtn = document.getElementById(`fcdBtn_${i}`);
-    if (fbtn) {
-      if (i === currentFinishCooldownSec) {
-        fbtn.style.background = "#059669";
-        fbtn.style.color = "#fff";
-        fbtn.style.borderColor = "#047857";
-      } else {
-        fbtn.style.background = "#fff";
-        fbtn.style.color = "#1e293b";
-        fbtn.style.borderColor = "#cbd5e1";
-      }
-    }
+// 學生於手機端選擇第 1~10 次測試並點擊「✅ 確認」
+async function confirmTimerTestRound() {
+  if (isWorking) {
+    alert("⚠️ 目前正在計時作業中，請先完成本件作業後再切換測試組數！");
+    const trSelect = document.getElementById("timerTestRoundSelect");
+    if (trSelect) trSelect.value = String(currentTestRound);
+    return;
   }
-}
+  const trSelect = document.getElementById("timerTestRoundSelect");
+  const selectedRound = Math.min(10, Math.max(1, parseInt(trSelect ? trSelect.value : "1", 10) || 1));
 
-function openCooldownModal() {
-  const m = document.getElementById("cooldownModal");
-  if (m) {
-    updateCooldownBadgeUI();
-    m.style.display = "flex";
+  const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n確認後，全組將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」，且本組在製品庫存將歸零並恢復初始備料（先前各次測試紀錄均完整保留）！`);
+  if (!ok) {
+    if (trSelect) trSelect.value = String(currentTestRound);
+    return;
   }
-}
 
-function closeCooldownModal() {
-  const m = document.getElementById("cooldownModal");
-  if (m) m.style.display = "none";
-}
-
-async function setTimerCooldown(sec) {
-  currentCooldownSec = sec;
-  updateCooldownBadgeUI();
+  currentSystemMode = "TEST";
+  currentTestRound = selectedRound;
   try {
+    localStorage.setItem("ie_chair_test_round", String(selectedRound));
+  } catch(e) {}
+  updateModeBadgeUI();
+
+  try {
+    // 1. 同步更新雲端 SYSTEM_MODE
     await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
       method: "PATCH",
       headers: {
         apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ output_wip: sec, updated_at: new Date().toISOString() })
+      body: JSON.stringify({
+        input_wip: encodeSystemModeInput("TEST", currentTestRound),
+        output_wip: encodeSystemCooldownOutput(currentCooldownSec, currentFinishCooldownSec),
+        updated_at: new Date().toISOString()
+      })
     });
-  } catch(e) {}
-  showScanBanner(`🛡️ 開工後防呆鎖定時間已設定為 ${sec} 秒`, "success", 2000);
-}
 
-function setFinishCooldown(sec) {
-  currentFinishCooldownSec = sec;
-  try {
-    localStorage.setItem("ie_chair_finish_cooldown_sec", String(sec));
+    // 2. 將本組 station_wip 歸零並還原初始備料
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+    });
+    if (!isRootStation && subInitCount > 0 && wipRecordId) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: subInitCount, output_wip: 0, updated_at: new Date().toISOString() })
+      });
+    }
+    if (isMixedStation() && rawWipRecordId) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${rawWipRecordId}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: rawInitCount, output_wip: 0, updated_at: new Date().toISOString() })
+      });
+    }
   } catch(e) {}
-  updateCooldownBadgeUI();
-  showScanBanner(`⏳ 掃描完工後冷卻時間已設定為 ${sec} 秒`, "success", 2000);
+
+  prevKitCount = null;
+  scanCooldownUntil = 0;
+  rootWaitingNextChime = false;
+  await fetchWipData();
+  await syncHistoryFromDb();
+  await computeKitting();
+  showScanBanner(`✓ 已確認切換為【🧪 第 ${selectedRound} 次測試】！可開始掃碼作業`, "success", 3500);
 }
 
 // 初始化
@@ -686,6 +755,18 @@ async function init() {
     await fetchWipData();
     await autoSyncLive(); // 讀取全域 SYSTEM_MODE 與歷史
     await computeKitting();
+    window.isTimerReadyForChime = true;
+    if (typeof updateAudioButtonLabel === "function") updateAudioButtonLabel();
+    const trSel = document.getElementById("timerTestRoundSelect");
+    if (trSel) {
+      trSel.addEventListener("change", function() {
+        const previewRound = parseInt(this.value, 10) || 1;
+        unlockAudioEngine();
+        playDingDongSound(previewRound);
+        const prof = getChimeProfile(previewRound);
+        showScanBanner(`🔊 預覽【第 ${previewRound} 組/次】專屬提示音：${prof.label}（含震動）`, "info", 2500);
+      });
+    }
     showMsg("就緒，請將鏡頭對準本站桌牌開工", "#10b981");
 
     // 📷 自動啟動常駐相機 (全自動純掃碼模式，不需點擊按鈕)
@@ -813,11 +894,21 @@ async function computeKitting() {
   if (isRootStation || feederStations.length === 0) {
     kitCount = 9999;
     window.currentTotalSub = 9999;
-    const becameReady = (prevKitCount === null || prevKitCount === 0) && !isWorking;
+    const now = Date.now();
+    const inFinishCooldown = (now < scanCooldownUntil);
+    const becameReady = (prevKitCount === null || prevKitCount === 0) && !isWorking && !inFinishCooldown;
     prevKitCount = kitCount;
-    if (becameReady) {
-      alertMaterialReady();
-      showScanBanner("🔔 起始工站原料充足！請掃描 QR Code 開始作業！", "success", 4000);
+
+    if (!isWorking && !inFinishCooldown) {
+      if (becameReady || rootWaitingNextChime) {
+        rootWaitingNextChime = false;
+        alertMaterialReady();
+        const nextPieceNo = currentOutWip + 1;
+        showScanBanner(`🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`, "success", 4000);
+      } else if (pendingMaterialChime || (now - lastMaterialChimeTime) >= 2000) {
+        // 起始工站原料已就緒但超過 2 秒尚未掃碼開工，高頻率持續響音與震動提醒
+        alertMaterialReady();
+      }
     }
     refreshUiNumbers();
     return;
@@ -886,8 +977,8 @@ async function computeKitting() {
     if (materialArrived) {
       alertMaterialReady();
       showScanBanner(`🔔 前站物料已送達（目前可開工：${kitCount} 套）！請掃描 QR Code 開始作業！`, "success", 4000);
-    } else if (pendingMaterialChime || (!isRootStation && (Date.now() - lastMaterialChimeTime) >= 6000)) {
-      // 若先前因瀏覽器尚未解鎖未響，或後續工站料已到齊但超過 6 秒尚未掃碼開工，持續自動響音提醒
+    } else if (pendingMaterialChime || (!isRootStation && (Date.now() - lastMaterialChimeTime) >= 2000)) {
+      // 若先前因瀏覽器尚未解鎖未響，或後續工站料已到齊但超過 2 秒尚未掃碼開工，高頻率持續自動響音與震動提醒
       alertMaterialReady();
     }
   } else if (isWorking || kitCount <= 0) {
@@ -975,11 +1066,16 @@ function refreshUiNumbers() {
     return;
   }
 
-  // 1. 若為起點工站 (前無工作站)
-  // 1. 若為起點工站 (前無工作站，原料無限供應)
+  // 1. 若為起點工站 (前無工作站，第1件立即提示，第2件起於上一件完工後間隔 3~5 秒提示)
   if (isRootStation) {
-    enableStartButton("📷 請掃描 QR Code 開工");
-    showMsg("🟢 起始工站（原料無限供應）：隨時可開工，請對準 QR Code 掃描！", "#10b981");
+    if (Date.now() < scanCooldownUntil) {
+      const remain = Math.max(0.1, (scanCooldownUntil - Date.now()) / 1000).toFixed(1);
+      disableStartButton(`⏳ 準備下一件原料中 (${remain}s)...`);
+      showMsg(`⏳ 上一件已完工，間隔 ${currentFinishCooldownSec} 秒後將自動發出下一件開工提示音...`, "#059669");
+    } else {
+      enableStartButton("📷 請掃描 QR Code 開工");
+      showMsg(`🟢 起始工站第 ${currentOutWip + 1} 件原料已就緒，請對準 QR Code 掃描開工！`, "#10b981");
+    }
     return;
   }
 
@@ -1095,15 +1191,22 @@ async function autoSyncLive() {
       );
       const modeRows = await modeRes.json();
       if (modeRows && modeRows.length > 0) {
-        const remoteMode = (modeRows[0].input_wip === 1) ? "OFFICIAL" : "TEST";
-        const remoteCooldown = modeRows[0].output_wip || 3;
-        if (remoteMode !== currentSystemMode) {
-          currentSystemMode = remoteMode;
+        const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
+        const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
+        if (decodedMode.mode !== currentSystemMode || decodedMode.round !== currentTestRound) {
+          currentSystemMode = decodedMode.mode;
+          currentTestRound = decodedMode.round;
+          try { localStorage.setItem("ie_chair_test_round", String(currentTestRound)); } catch(e) {}
           updateModeBadgeUI();
           if (!isWorking) await syncHistoryFromDb();
         }
-        if (remoteCooldown !== currentCooldownSec) {
-          currentCooldownSec = remoteCooldown;
+        if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec) {
+          currentCooldownSec = decodedCd.startCd;
+          currentFinishCooldownSec = decodedCd.finishCd;
+          try {
+            localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
+            localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
+          } catch(e) {}
           updateCooldownBadgeUI();
         }
       }
@@ -1149,17 +1252,158 @@ let lastDecodedText = "";
 let lastDecodedTime = 0;
 
 // ==========================================
-// 🔊 雙引擎全局音效系統 (Web Audio API + 內建 WAV 音訊保底，確保料到立即響音)
+// 🔊 10 組高辨識度專屬可開工提示音 + 強震動反饋系統 (每 2 秒高頻提醒)
 // ==========================================
 let sharedAudioCtx = null;
-let dingDongWavAudio = null;
+let chimeWavAudioCache = {};
 let keepAliveStarted = false;
+const MATERIAL_CHIME_INTERVAL_MS = 2000; // 縮短週期至每 2.0 秒高頻率提示一次
 
-// 動態合成「叮～咚～」雙音和弦 (659.25Hz E5 -> 880Hz A5) PCM WAV Data URI，突破背景計時限制
-function createDingDongWavUrl() {
+// 🎵 10 組完全不同的可開工提示音旋律與專屬震動節奏 (支援 G01~G10 十組及第 1~10 次測試)
+const CHIME_PROFILES = [
+  {
+    id: 1,
+    label: "#1 清脆叮咚",
+    vibrate: [240, 70, 320],
+    notes: [
+      { f: 659.25, t: 0.00, d: 0.28, wave: "sine", vol: 0.85 },
+      { f: 880.00, t: 0.16, d: 0.42, wave: "sine", vol: 0.90 }
+    ]
+  },
+  {
+    id: 2,
+    label: "#2 活力三連音",
+    vibrate: [150, 50, 150, 50, 280],
+    notes: [
+      { f: 523.25, t: 0.00, d: 0.16, wave: "triangle", vol: 0.85 },
+      { f: 659.25, t: 0.13, d: 0.16, wave: "triangle", vol: 0.85 },
+      { f: 783.99, t: 0.26, d: 0.36, wave: "triangle", vol: 0.95 }
+    ]
+  },
+  {
+    id: 3,
+    label: "#3 雙響高音鈴",
+    vibrate: [120, 45, 120, 70, 380],
+    notes: [
+      { f: 783.99, t: 0.00, d: 0.11, wave: "sine", vol: 0.85 },
+      { f: 783.99, t: 0.13, d: 0.11, wave: "sine", vol: 0.85 },
+      { f: 1174.66, t: 0.26, d: 0.38, wave: "sine", vol: 0.95 }
+    ]
+  },
+  {
+    id: 4,
+    label: "#4 號角衝鋒音",
+    vibrate: [120, 40, 120, 40, 120, 50, 340],
+    notes: [
+      { f: 392.00, t: 0.00, d: 0.12, wave: "triangle", vol: 0.85 },
+      { f: 523.25, t: 0.11, d: 0.12, wave: "triangle", vol: 0.85 },
+      { f: 659.25, t: 0.22, d: 0.12, wave: "triangle", vol: 0.90 },
+      { f: 783.99, t: 0.33, d: 0.34, wave: "triangle", vol: 0.95 }
+    ]
+  },
+  {
+    id: 5,
+    label: "#5 雙八度雷達",
+    vibrate: [280, 60, 120, 60, 280],
+    notes: [
+      { f: 440.00, t: 0.00, d: 0.14, wave: "sine", vol: 0.85 },
+      { f: 880.00, t: 0.14, d: 0.14, wave: "sine", vol: 0.90 },
+      { f: 659.25, t: 0.28, d: 0.14, wave: "sine", vol: 0.85 },
+      { f: 880.00, t: 0.42, d: 0.28, wave: "sine", vol: 0.95 }
+    ]
+  },
+  {
+    id: 6,
+    label: "#6 輕快馬林巴",
+    vibrate: [140, 50, 140, 50, 140, 50, 240],
+    notes: [
+      { f: 587.33, t: 0.00, d: 0.13, wave: "triangle", vol: 0.85 },
+      { f: 739.99, t: 0.12, d: 0.13, wave: "triangle", vol: 0.85 },
+      { f: 880.00, t: 0.24, d: 0.13, wave: "triangle", vol: 0.90 },
+      { f: 1174.66, t: 0.36, d: 0.32, wave: "triangle", vol: 0.95 }
+    ]
+  },
+  {
+    id: 7,
+    label: "#7 急促雙鳴笛",
+    vibrate: [320, 80, 320, 80, 180],
+    notes: [
+      { f: 1046.50, t: 0.00, d: 0.14, wave: "triangle", vol: 0.90 },
+      { f: 783.99, t: 0.14, d: 0.14, wave: "triangle", vol: 0.80 },
+      { f: 1046.50, t: 0.30, d: 0.14, wave: "triangle", vol: 0.90 },
+      { f: 783.99, t: 0.44, d: 0.22, wave: "triangle", vol: 0.85 }
+    ]
+  },
+  {
+    id: 8,
+    label: "#8 五階步進音",
+    vibrate: [90, 40, 90, 40, 90, 40, 90, 40, 280],
+    notes: [
+      { f: 523.25, t: 0.00, d: 0.10, wave: "sine", vol: 0.80 },
+      { f: 587.33, t: 0.09, d: 0.10, wave: "sine", vol: 0.82 },
+      { f: 659.25, t: 0.18, d: 0.10, wave: "sine", vol: 0.85 },
+      { f: 783.99, t: 0.27, d: 0.10, wave: "sine", vol: 0.90 },
+      { f: 1046.50, t: 0.36, d: 0.32, wave: "sine", vol: 0.95 }
+    ]
+  },
+  {
+    id: 9,
+    label: "#9 水晶鐘琴音",
+    vibrate: [360, 70, 140, 50, 360],
+    notes: [
+      { f: 1318.51, t: 0.00, d: 0.16, wave: "sine", vol: 0.90 },
+      { f: 987.77, t: 0.15, d: 0.16, wave: "sine", vol: 0.85 },
+      { f: 830.61, t: 0.30, d: 0.16, wave: "sine", vol: 0.85 },
+      { f: 1318.51, t: 0.45, d: 0.28, wave: "sine", vol: 0.95 }
+    ]
+  },
+  {
+    id: 10,
+    label: "#10 勝利交響鈴",
+    vibrate: [110, 45, 110, 45, 110, 70, 450],
+    notes: [
+      { f: 698.46, t: 0.00, d: 0.10, wave: "triangle", vol: 0.85 },
+      { f: 698.46, t: 0.11, d: 0.10, wave: "triangle", vol: 0.85 },
+      { f: 698.46, t: 0.22, d: 0.10, wave: "triangle", vol: 0.85 },
+      { f: 932.33, t: 0.33, d: 0.16, wave: "triangle", vol: 0.90 },
+      { f: 1174.66, t: 0.48, d: 0.26, wave: "triangle", vol: 0.95 }
+    ]
+  }
+];
+
+// 依目前組別 (G01~G10) 與測試組數 (第 1~10 次) 取得對應的專屬音效 Profile (1~10 皆不同)
+function getChimeProfile(overrideRound) {
+  const grpNum = Math.max(1, parseInt((groupId || "G01").replace(/\D/g, ""), 10) || 1);
+  const roundNum = overrideRound !== undefined
+    ? Math.max(1, parseInt(overrideRound, 10) || 1)
+    : (currentSystemMode === "TEST" ? Math.max(1, parseInt(currentTestRound, 10) || 1) : 1);
+  const idx = ((grpNum - 1) + (roundNum - 1)) % CHIME_PROFILES.length;
+  return CHIME_PROFILES[idx];
+}
+
+function updateAudioButtonLabel() {
+  const btn = document.getElementById("btnTestAudio");
+  if (!btn) return;
+  const prof = getChimeProfile();
+  btn.innerHTML = `🔊 測試提示音 (${prof.label})`;
+}
+
+// 觸發手機實體震動 + 低頻共振觸覺脈衝
+function triggerDeviceVibration(pattern) {
   try {
+    if (navigator.vibrate) {
+      navigator.vibrate(0); // 先重置前次震動確保每次都能立即觸發
+      navigator.vibrate(pattern || [240, 70, 320]);
+    }
+  } catch (e) {}
+}
+
+// 為指定音效 Profile 動態合成 PCM WAV Data URI (含低頻共振波與泛音，突破背景計時限制)
+function createChimeWavUrl(profile) {
+  try {
+    const prof = profile || getChimeProfile();
     const sampleRate = 22050;
-    const duration = 0.65;
+    const duration = 0.78;
     const numSamples = Math.floor(sampleRate * duration);
     const buffer = new ArrayBuffer(44 + numSamples * 2);
     const view = new DataView(buffer);
@@ -1183,14 +1427,17 @@ function createDingDongWavUrl() {
     for (let i = 0; i < numSamples; i++) {
       const t = i / sampleRate;
       let sample = 0;
-      if (t < 0.35) {
-        const env1 = Math.exp(-t * 8);
-        sample += Math.sin(2 * Math.PI * 659.25 * t) * env1 * 0.55;
-      }
-      if (t >= 0.16) {
-        const t2 = t - 0.16;
-        const env2 = Math.exp(-t2 * 5.5);
-        sample += Math.sin(2 * Math.PI * 880.0 * t2) * env2 * 0.65;
+      for (let nIdx = 0; nIdx < prof.notes.length; nIdx++) {
+        const note = prof.notes[nIdx];
+        if (t >= note.t && t <= note.t + note.d + 0.08) {
+          const dt = t - note.t;
+          const env = Math.exp(-dt * (1.8 / Math.max(0.1, note.d)));
+          let waveVal = Math.sin(2 * Math.PI * note.f * dt);
+          if (note.wave === "triangle") {
+            waveVal = waveVal * 0.75 + Math.sin(2 * Math.PI * (note.f * 2) * dt) * 0.25;
+          }
+          sample += waveVal * env * (note.vol * 0.65);
+        }
       }
       sample = Math.max(-1, Math.min(1, sample));
       view.setInt16(44 + i * 2, sample * 32767, true);
@@ -1239,17 +1486,19 @@ function unlockAudioEngine() {
   const ctx = getAudioContext();
   if (ctx) {
     ctx.resume().then(() => {
-      if (pendingMaterialChime && !isWorking && kitCount > 0) {
+      if (pendingMaterialChime && !isWorking && (isRootStation || kitCount > 0)) {
         pendingMaterialChime = false;
         playDingDongSound();
       }
     }).catch(() => {});
   }
-  if (!dingDongWavAudio) {
-    const url = createDingDongWavUrl();
+  const prof = getChimeProfile();
+  if (!chimeWavAudioCache[prof.id]) {
+    const url = createChimeWavUrl(prof);
     if (url) {
-      dingDongWavAudio = new Audio(url);
-      dingDongWavAudio.volume = 1.0;
+      const a = new Audio(url);
+      a.volume = 1.0;
+      chimeWavAudioCache[prof.id] = a;
     }
   }
 }
@@ -1259,11 +1508,12 @@ function unlockAudioEngine() {
   window.addEventListener(evt, unlockAudioEngine, { capture: true, passive: true });
 });
 
-// 手動音效測試
+// 手動音效與震動測試
 function testAudioSound() {
   unlockAudioEngine();
+  const prof = getChimeProfile();
   playDingDongSound();
-  showScanBanner("🔊 到料提示音播放測試（叮咚～）", "info", 2500);
+  showScanBanner(`🔊 播放【${groupId}｜第 ${currentTestRound} 次測試】專屬提示音：${prof.label}（含震動）`, "info", 2800);
 }
 
 // Web Audio API 提示音效 (START / FINISH / WARNING)
@@ -1282,7 +1532,7 @@ async function playAudioFeedback(type) {
     gain.connect(ctx.destination);
 
     if (type === "START") {
-      // 成功開工：清脆躍升雙音 (880Hz -> 1046.5Hz, 0.2s)
+      triggerDeviceVibration([120]);
       osc.type = "sine";
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.1);
@@ -1291,7 +1541,7 @@ async function playAudioFeedback(type) {
       osc.start(now);
       osc.stop(now + 0.2);
     } else if (type === "FINISH") {
-      // 成功完工：悅耳雙音和弦 (587.33Hz -> 880Hz, 0.3s)
+      triggerDeviceVibration([150, 60, 180]);
       osc.type = "sine";
       osc.frequency.setValueAtTime(587.33, now);
       osc.frequency.setValueAtTime(880, now + 0.12);
@@ -1300,7 +1550,7 @@ async function playAudioFeedback(type) {
       osc.start(now);
       osc.stop(now + 0.3);
     } else if (type === "WARNING") {
-      // 防呆攔截/警示：低沈短音 (220Hz, 0.25s)
+      triggerDeviceVibration([300, 80, 300]);
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(220, now);
       gain.gain.setValueAtTime(0.75, now);
@@ -1313,9 +1563,14 @@ async function playAudioFeedback(type) {
   }
 }
 
-// 清脆悅耳的「叮咚～」上升和弦音效 (料到立即響音提示)
-async function playDingDongSound() {
+// 播放目前組別/測試組數專屬的「可開工提示音 + 震動」
+async function playDingDongSound(overrideRound) {
   lastMaterialChimeTime = Date.now();
+  const prof = getChimeProfile(overrideRound);
+
+  // 每次響起提示音時同步觸發專屬震動節奏
+  triggerDeviceVibration(prof.vibrate);
+
   let playedViaWebAudio = false;
   try {
     const ctx = getAudioContext();
@@ -1325,47 +1580,37 @@ async function playDingDongSound() {
       }
       if (ctx.state === 'running') {
         const now = ctx.currentTime;
-        // 音符 1: E5 (659.25Hz)
-        const osc1 = ctx.createOscillator();
-        const gain1 = ctx.createGain();
-        osc1.type = "sine";
-        osc1.frequency.setValueAtTime(659.25, now);
-        gain1.gain.setValueAtTime(0.8, now);
-        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-        osc1.connect(gain1);
-        gain1.connect(ctx.destination);
-        osc1.start(now);
-        osc1.stop(now + 0.35);
-
-        // 音符 2: A5 (880Hz) 叮～咚～
-        const osc2 = ctx.createOscillator();
-        const gain2 = ctx.createGain();
-        osc2.type = "sine";
-        osc2.frequency.setValueAtTime(880, now + 0.18);
-        gain2.gain.setValueAtTime(0.85, now + 0.18);
-        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
-        osc2.connect(gain2);
-        gain2.connect(ctx.destination);
-        osc2.start(now + 0.18);
-        osc2.stop(now + 0.65);
+        prof.notes.forEach(note => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = note.wave || "sine";
+          osc.frequency.setValueAtTime(note.f, now + note.t);
+          gain.gain.setValueAtTime(note.vol || 0.85, now + note.t);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + note.t + note.d);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + note.t);
+          osc.stop(now + note.t + note.d + 0.02);
+        });
         playedViaWebAudio = true;
         pendingMaterialChime = false;
       }
     }
   } catch (e) {
-    console.warn("DingDong WebAudio error:", e);
+    console.warn("Chime WebAudio error:", e);
   }
 
-  // 若 WebAudio 尚未處於 running 狀態，立即使用內建 WAV Audio 播放；若仍被瀏覽器攔截則標記 pendingMaterialChime
+  // 若 WebAudio 尚未處於 running 狀態，立即使用該組專屬內建 WAV Audio 播放
   if (!playedViaWebAudio) {
     try {
-      if (!dingDongWavAudio) {
-        const url = createDingDongWavUrl();
-        if (url) dingDongWavAudio = new Audio(url);
+      if (!chimeWavAudioCache[prof.id]) {
+        const url = createChimeWavUrl(prof);
+        if (url) chimeWavAudioCache[prof.id] = new Audio(url);
       }
-      if (dingDongWavAudio) {
-        dingDongWavAudio.currentTime = 0;
-        await dingDongWavAudio.play();
+      const wavAudio = chimeWavAudioCache[prof.id];
+      if (wavAudio) {
+        wavAudio.currentTime = 0;
+        await wavAudio.play();
         pendingMaterialChime = false;
       } else {
         pendingMaterialChime = true;
@@ -1376,13 +1621,10 @@ async function playDingDongSound() {
   }
 }
 
-// 🔔 料足聲光與震動提示 (新物料齊套瞬間觸發強烈脈衝與呼吸燈)
+// 🔔 料足聲光與震動提示 (新物料齊套瞬間及每 2 秒高頻觸發強烈脈衝、專屬音效與震動)
 function alertMaterialReady() {
   playDingDongSound();
   updateBreathingLight();
-  try {
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 300]);
-  } catch(e) {}
 
   const timerCard = document.getElementById("timerCard");
   const scannerCard = document.getElementById("scannerCard");
@@ -1390,13 +1632,13 @@ function alertMaterialReady() {
     timerCard.classList.remove("pulse-green-active");
     void timerCard.offsetWidth;
     timerCard.classList.add("pulse-green-active");
-    setTimeout(() => { timerCard.classList.remove("pulse-green-active"); }, 4000);
+    setTimeout(() => { timerCard.classList.remove("pulse-green-active"); }, 1800);
   }
   if (scannerCard) {
     scannerCard.classList.remove("pulse-green-active");
     void scannerCard.offsetWidth;
     scannerCard.classList.add("pulse-green-active");
-    setTimeout(() => { scannerCard.classList.remove("pulse-green-active"); }, 4000);
+    setTimeout(() => { scannerCard.classList.remove("pulse-green-active"); }, 1800);
   }
 }
 
@@ -1425,11 +1667,13 @@ function updateBreathingLight() {
       if (scannerCard) scannerCard.classList.add("breathing-blue-working");
     }
   } else {
-    // 3. 待命狀態：若料足齊套（符合開工條件）：綠色呼吸燈常駐呼吸！
-    const canStart = (isRootStation || kitCount > 0);
-    if (canStart) {
-      timerCard.classList.add("breathing-green-ready");
-      if (scannerCard) scannerCard.classList.add("breathing-green-ready");
+    // 3. 待命狀態：若非完工冷卻期間且料足齊套（符合開工條件）：綠色呼吸燈常駐呼吸！
+    if (now >= scanCooldownUntil) {
+      const canStart = (isRootStation || kitCount > 0);
+      if (canStart) {
+        timerCard.classList.add("breathing-green-ready");
+        if (scannerCard) scannerCard.classList.add("breathing-green-ready");
+      }
     }
   }
 }
@@ -1470,6 +1714,18 @@ function updateScannerBadge() {
   const badge = document.getElementById("scanStatusBadge");
   const mainBtn = document.getElementById("mainActionBtn");
   const now = Date.now();
+
+  // 🔔 高頻率可開工提示音與震動迴圈 (每 2.0 秒自動觸發一次，不需等待網路輪詢)
+  const isOfficialDone = (currentSystemMode === "OFFICIAL" && currentOutWip >= 1);
+  if (window.isTimerReadyForChime && !isWorking && !isOfficialDone && now >= scanCooldownUntil && (isRootStation || kitCount > 0)) {
+    if (rootWaitingNextChime) {
+      rootWaitingNextChime = false;
+      alertMaterialReady();
+      showScanBanner(`🔔 起始工站第 ${currentOutWip + 1} 件原料已就緒！請掃描 QR Code 開始作業！`, "success", 3500);
+    } else if (pendingMaterialChime || (now - lastMaterialChimeTime) >= MATERIAL_CHIME_INTERVAL_MS) {
+      alertMaterialReady();
+    }
+  }
 
   if (!isScannerRunning) {
     if (badge) {
@@ -1630,23 +1886,35 @@ async function handleFinishWork(source = "SCAN") {
     // 4. 立即自雲端資料庫重新同步歷史，確保序號與清單絕對精準
     await syncHistoryFromDb();
 
+    // 5. 先設定掃描完工後冷卻暨起始站下一件提示間隔 (預設 4 秒，即 3~5 秒)
+    scanCooldownUntil = Date.now() + (currentFinishCooldownSec * 1000);
+    if (isRootStation) {
+      rootWaitingNextChime = true;
+    }
+
     isWorking = false;
     document.getElementById("timerDisplay").textContent = "00:00.0";
     await computeKitting();
 
-    // 5. 設定掃描完工後冷卻期 (依使用者設定之 currentFinishCooldownSec 秒數，防止條碼未移開重複開工)
-    scanCooldownUntil = Date.now() + (currentFinishCooldownSec * 1000);
-
     playAudioFeedback("FINISH");
-    const finishMsg = `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒 (冷卻 ${currentFinishCooldownSec}s)`;
+    const finishMsg = isRootStation
+      ? `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒（間隔 ${currentFinishCooldownSec} 秒後提示下一件開工）`
+      : `✓ 【掃碼完工】${finishedProduct} 完成！耗時 ${durationSec} 秒 (冷卻 ${currentFinishCooldownSec}s)`;
     showMsg(finishMsg, "#10b981");
     showScanBanner(finishMsg, "success", 3000);
     updateScannerBadge();
 
-    // 冷卻期結束自動恢復待命狀態
+    // 冷卻/間隔期結束：自動恢復待命狀態；若為起始站則效法中間站立即發出「叮咚～」到料提示音！
     setTimeout(() => {
       updateScannerBadge();
-    }, (currentFinishCooldownSec * 1000) + 100);
+      refreshUiNumbers();
+      if (isRootStation && !isWorking && !(currentSystemMode === "OFFICIAL" && currentOutWip >= 1)) {
+        rootWaitingNextChime = false;
+        alertMaterialReady();
+        const nextPieceNo = currentOutWip + 1;
+        showScanBanner(`🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`, "success", 4000);
+      }
+    }, (currentFinishCooldownSec * 1000) + 80);
 
   } catch (err) {
     showMsg("存檔失敗：" + err.message, "#ef4444");
@@ -1985,16 +2253,18 @@ async function syncHistoryFromDb() {
     // 嚴格依開始時間正序排序
     events.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
-    // 依目前模式篩選本站完工數
+    // 依目前模式與第幾次測試 (1~10) 篩選本站當前輪次完工數
     const isTestMode = (currentSystemMode === "TEST");
     const modeEvents = events.filter(e => {
-      const isTest = (e.product_id || "").startsWith("TEST-");
-      return isTestMode ? isTest : !isTest;
+      const isTest = isTestProductId(e.product_id);
+      if (!isTestMode) return !isTest;
+      if (!isTest) return false;
+      return getTestRoundFromProductId(e.product_id) === currentTestRound;
     });
 
     currentOutWip = modeEvents.length;
     document.getElementById("wipOutText").textContent = currentOutWip;
-    document.getElementById("cycleTotalBadge").textContent = `${isTestMode ? "🧪 測試完成" : "🏆 正式完成"}：${currentOutWip} 件`;
+    document.getElementById("cycleTotalBadge").textContent = `${isTestMode ? `🧪 第 ${currentTestRound} 次測試完成` : "🏆 正式完成"}：${currentOutWip} 件`;
 
     const list = document.getElementById("historyList");
     if (events.length === 0) {
@@ -2022,9 +2292,10 @@ async function syncHistoryFromDb() {
         wipDisplay = "-";
       }
 
-      const isEvTest = (ev.product_id || "").startsWith("TEST-");
+      const isEvTest = isTestProductId(ev.product_id);
+      const evRound = getTestRoundFromProductId(ev.product_id);
       const tag = isEvTest
-        ? `<span style="font-size:11px; background:#f3e8ff; color:#7e22ce; padding:2px 6px; border-radius:4px; font-weight:bold;">🧪測試</span>`
+        ? `<span style="font-size:11px; background:#f3e8ff; color:#7e22ce; padding:2px 6px; border-radius:4px; font-weight:bold;">🧪第${evRound || 1}次測試</span>`
         : `<span style="font-size:11px; background:#fef3c7; color:#b45309; padding:2px 6px; border-radius:4px; font-weight:bold;">🏆正式</span>`;
 
       const item = document.createElement("div");
@@ -2089,43 +2360,5 @@ function showMsg(text, color) {
 
 init();
 </script>
-  <!-- 彈跳視窗：開工防呆與掃描完工後冷卻秒數設定 -->
-  <div id="cooldownModal" style="display:none; position:fixed; z-index:999; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(2px); align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:14px; max-width:360px; width:92%; padding:20px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2); margin:60px auto;">
-      <h3 style="margin-top:0; margin-bottom:12px;">⚙️ 掃碼防呆與完工冷卻設定</h3>
-
-      <div style="text-align:left; background:#f8fafc; padding:12px; border-radius:10px; border:1px solid #e2e8f0; margin-bottom:14px;">
-        <div style="font-size:13px; font-weight:bold; color:#1e40af; margin-bottom:4px;">🛡️ 1. 開工後防呆鎖定時間</div>
-        <div style="font-size:12px; color:#64748b; margin-bottom:10px;">
-          掃碼開工後，未滿此秒數禁止完工（避免秒開秒關誤觸）。
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px;">
-          <button type="button" class="cd-btn" onclick="setTimerCooldown(1)" id="cdBtn_1" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">1s</button>
-          <button type="button" class="cd-btn" onclick="setTimerCooldown(2)" id="cdBtn_2" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">2s</button>
-          <button type="button" class="cd-btn" onclick="setTimerCooldown(3)" id="cdBtn_3" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">3s</button>
-          <button type="button" class="cd-btn" onclick="setTimerCooldown(4)" id="cdBtn_4" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">4s</button>
-          <button type="button" class="cd-btn" onclick="setTimerCooldown(5)" id="cdBtn_5" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">5s</button>
-        </div>
-      </div>
-
-      <div style="text-align:left; background:#f0fdf4; padding:12px; border-radius:10px; border:1px solid #bbf7d0; margin-bottom:16px;">
-        <div style="font-size:13px; font-weight:bold; color:#065f46; margin-bottom:4px;">⏳ 2. 掃描完工後冷卻時間</div>
-        <div style="font-size:12px; color:#64748b; margin-bottom:10px;">
-          掃碼完工後，需間隔此秒數才允許掃描下一件開工（防止條碼未移開重複開工）。
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px;">
-          <button type="button" class="fcd-btn" onclick="setFinishCooldown(1)" id="fcdBtn_1" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">1s</button>
-          <button type="button" class="fcd-btn" onclick="setFinishCooldown(2)" id="fcdBtn_2" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">2s</button>
-          <button type="button" class="fcd-btn" onclick="setFinishCooldown(3)" id="fcdBtn_3" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">3s</button>
-          <button type="button" class="fcd-btn" onclick="setFinishCooldown(4)" id="fcdBtn_4" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">4s</button>
-          <button type="button" class="fcd-btn" onclick="setFinishCooldown(5)" id="fcdBtn_5" style="padding:8px 0; font-size:13px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">5s</button>
-        </div>
-      </div>
-
-      <button type="button" onclick="closeCooldownModal()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#2563eb; color:#fff; font-weight:bold; cursor:pointer;">
-        確定
-      </button>
-    </div>
-  </div>
 </body>
 </html>

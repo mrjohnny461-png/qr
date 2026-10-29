@@ -366,6 +366,28 @@ function getStationPart(group, station) {
   return "";
 }
 
+// 🧹 自動清除舊版殘留之預設零件設定 (如「零件5 / 4顆」)，確保預設皆為不勾選且無預設值
+(function cleanLegacyRawDefaults() {
+  try {
+    if (!localStorage.getItem("ie_chair_raw_clean_v3")) {
+      const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+      Object.keys(all).forEach(g => {
+        if (all[g] && typeof all[g] === "object") {
+          Object.keys(all[g]).forEach(st => {
+            if (all[g][st] && typeof all[g][st] === "object") {
+              all[g][st].hasRaw = false;
+              all[g][st].rawName = "";
+              all[g][st].rawInit = "";
+            }
+          });
+        }
+      });
+      localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(all));
+      localStorage.setItem("ie_chair_raw_clean_v3", "1");
+    }
+  } catch(e) {}
+})();
+
 // 📦 讀取各組別與各工站之原生零件與前置半成品設定
 function getStationRaw(group, station) {
   try {
@@ -374,7 +396,7 @@ function getStationRaw(group, station) {
       return all[group][station];
     }
   } catch(e) {}
-  return { hasRaw: false };
+  return { hasRaw: false, rawName: "", rawInit: "" };
 }
 
 window.addEventListener("load", () => {
@@ -1322,9 +1344,9 @@ function refreshModalRawConfigs(group) {
     const preds = flowPairs.filter(p => p.to === st).map(p => p.from);
     const isRoot = preds.length === 0;
     const savedCfg = tempValues[st] || groupRaw[st] || {};
-    const hasRaw = !!(savedCfg.hasRaw || (savedCfg.rawInit && savedCfg.rawInit > 0));
-    const rawName = (savedCfg.rawName !== undefined && savedCfg.rawName !== null) ? savedCfg.rawName : "";
-    const rawInit = (savedCfg.rawInit !== undefined && savedCfg.rawInit !== null) ? savedCfg.rawInit : "";
+    const hasRaw = (savedCfg.hasRaw === true);
+    const rawName = (hasRaw && savedCfg.rawName !== undefined && savedCfg.rawName !== null) ? String(savedCfg.rawName) : "";
+    const rawInit = (hasRaw && savedCfg.rawInit !== undefined && savedCfg.rawInit !== null && savedCfg.rawInit !== "") ? savedCfg.rawInit : "";
 
     const div = document.createElement("div");
     if (isRoot) {
@@ -1360,19 +1382,24 @@ function refreshModalRawConfigs(group) {
         </div>
         <div id="modalRawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; align-items:center; gap:6px; margin-left:20px; font-size:12px; flex-wrap:wrap; background:#f8fafc; padding:6px 10px; border-radius:6px; border:1px solid #e2e8f0;">
           <span style="color:#64748b; font-weight:bold; white-space:nowrap;">零件名稱:</span>
-          <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="自訂名稱 (如:螺絲)" style="padding:4px 8px; font-size:12px; flex:1; min-width:80px; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+          <input type="text" id="modalRawName_${st}" value="${rawName}" placeholder="" style="padding:4px 8px; font-size:12px; flex:1; min-width:80px; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
           <span style="color:#64748b; font-weight:bold; white-space:nowrap;">備料:</span>
           <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:0 4px; box-sizing:border-box;">
-            <input type="number" id="modalRawInit_${st}" value="${rawInit}" min="0" style="border:none; outline:none; width:36px; padding:3px 0; font-size:12px; text-align:right;">
+            <input type="number" id="modalRawInit_${st}" value="${rawInit}" placeholder="" min="0" style="border:none; outline:none; width:42px; padding:3px 0; font-size:12px; text-align:right;">
             <span style="font-size:11px; font-weight:bold; color:#64748b; margin-left:2px; white-space:nowrap;">顆</span>
           </div>
         </div>
       `;
       const chk = div.querySelector(`#modalRawCheck_${st}`);
       const box = div.querySelector(`#modalRawBox_${st}`);
-      if (chk && box) { chk.onchange = function() { box.style.display = this.checked ? "flex" : "none";
-
-    
+      const nameInp = div.querySelector(`#modalRawName_${st}`);
+      const initInp = div.querySelector(`#modalRawInit_${st}`);
+      if (chk && box) {
+        chk.onchange = function() {
+          box.style.display = this.checked ? "flex" : "none";
+          // 勾選或取消勾選時皆不自動帶入任何預設值，保持空白讓使用者自行輸入
+          if (nameInp) nameInp.value = "";
+          if (initInp) initInp.value = "";
         };
       }
     }
@@ -1463,12 +1490,13 @@ async function saveCustomFlow() {
     const hasRaw = chk ? chk.checked : false;
     const nameInput = document.getElementById(`modalRawName_${st}`);
     const initInput = document.getElementById(`modalRawInit_${st}`);
+    const rawInitStr = (hasRaw && initInput) ? initInput.value.trim() : "";
     newGroupRaw[st] = {
       isRoot: isRoot,
       subInit: isRoot ? 0 : subInitVal,
       hasRaw: hasRaw,
       rawName: (hasRaw && nameInput) ? nameInput.value.trim() : "",
-      rawInit: (hasRaw && initInput) ? (parseInt(initInput.value, 10) || 0) : 0
+      rawInit: rawInitStr !== "" ? (parseInt(rawInitStr, 10) || 0) : ""
     };
   });
   allRaw[group] = newGroupRaw;
@@ -1821,8 +1849,8 @@ function showStats(data) {
     const partNo = getStationPart(curGroup, station);
     const rawCfg = getStationRaw(curGroup, station);
     let partCell = partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : `<span style="color:#94a3b8;">-</span>`;
-    if (rawCfg.hasRaw) {
-      partCell += `<br><span style="font-size:11px; color:#b45309; font-weight:bold;">📦 含${rawCfg.rawName || '零件5'}</span>`;
+    if (rawCfg.hasRaw && rawCfg.rawName) {
+      partCell += `<br><span style="font-size:11px; color:#b45309; font-weight:bold;">📦 含${rawCfg.rawName}</span>`;
     }
 
     const rowData = [

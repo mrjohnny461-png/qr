@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
@@ -91,6 +91,19 @@
       <a href="工蓋螢幕.html" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:600; background:#eff6ff; padding:6px 14px; border-radius:8px; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:4px;">
         🖥️ 前往主監控看板 (現場看板模式) ❯
       </a>
+    </div>
+
+    <!-- 🎯 目前全線實作模式與第幾次測試註記橫幅 (與主監控看板管理員設定即時同步) -->
+    <div id="qrSystemModeBanner" style="margin-bottom:16px; padding:12px 16px; border-radius:10px; background:#faf5ff; border:2px solid #d8b4fe; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span style="font-size:14px; font-weight:bold; color:#475569;">🎯 目前全線實作模式：</span>
+        <span id="qrModeBadgeText" style="font-size:15px; font-weight:800; color:#7e22ce; background:#f3e8ff; padding:4px 12px; border-radius:8px; border:1px solid #c084fc;">
+          🧪 第 1 次測試 (Table 產品編號：TEST1-P01、TEST1-P02...)
+        </span>
+      </div>
+      <span style="font-size:12px; color:#64748b; font-weight:600;">
+        🔒 測試次數僅限【管理員】於主監控看板調整（桌牌 QR Code 固定通用，切換次數無須重印）
+      </span>
     </div>
 
     <!-- 永久固定且鎖定的網址 -->
@@ -228,6 +241,85 @@
     groupSelect.value = savedGroup;
   }
   let activeGroup = groupSelect.value || "G02";
+  let qrCurrentSystemMode = "TEST"; // "TEST" or "OFFICIAL"
+  let qrCurrentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1;
+  if (localStorage.getItem("ie_chair_system_mode") === "1") {
+    qrCurrentSystemMode = "OFFICIAL";
+  }
+
+  function decodeQrSystemModeInput(val) {
+    const n = parseInt(val, 10) || 0;
+    if (n === 1) return { mode: "OFFICIAL", round: qrCurrentTestRound };
+    if (n >= 101 && n <= 110) return { mode: "TEST", round: n - 100 };
+    return { mode: "TEST", round: 1 };
+  }
+
+  function getQrModeTagText() {
+    return qrCurrentSystemMode === "OFFICIAL"
+      ? `🏆 正式實作 (評分) ｜ Table 編號: P01、P02...`
+      : `🧪 第 ${qrCurrentTestRound} 次測試 ｜ Table 編號: TEST${qrCurrentTestRound}-P01...`;
+  }
+
+  function updateQrModeBannerUI() {
+    const banner = document.getElementById("qrSystemModeBanner");
+    const badge = document.getElementById("qrModeBadgeText");
+    if (!banner || !badge) return;
+    if (qrCurrentSystemMode === "OFFICIAL") {
+      banner.style.background = "#f0fdf4";
+      banner.style.borderColor = "#86efac";
+      badge.style.background = "#dcfce7";
+      badge.style.color = "#15803d";
+      badge.style.borderColor = "#86efac";
+      badge.innerHTML = `🏆 正式實作 (評分) <span style="font-size:12px; font-weight:bold; margin-left:6px;">(Table 產品編號：P01、P02...)</span>`;
+    } else {
+      banner.style.background = "#faf5ff";
+      banner.style.borderColor = "#d8b4fe";
+      badge.style.background = "#f3e8ff";
+      badge.style.color = "#7e22ce";
+      badge.style.borderColor = "#c084fc";
+      badge.innerHTML = `🧪 第 ${qrCurrentTestRound} 次測試 <span style="font-size:12px; font-weight:bold; margin-left:6px;">(Table 產品編號：TEST${qrCurrentTestRound}-P01、TEST${qrCurrentTestRound}-P02...)</span>`;
+    }
+    const singleModeEl = document.getElementById("qrSingleModeNote");
+    if (singleModeEl) {
+      singleModeEl.innerHTML = getQrModeTagText();
+      singleModeEl.style.background = qrCurrentSystemMode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
+      singleModeEl.style.color = qrCurrentSystemMode === "OFFICIAL" ? "#15803d" : "#7e22ce";
+      singleModeEl.style.borderColor = qrCurrentSystemMode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
+    }
+    document.querySelectorAll(".qr-card-mode-tag").forEach(el => {
+      el.innerHTML = getQrModeTagText();
+      el.style.background = qrCurrentSystemMode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
+      el.style.color = qrCurrentSystemMode === "OFFICIAL" ? "#15803d" : "#7e22ce";
+      el.style.borderColor = qrCurrentSystemMode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
+    });
+  }
+
+  async function syncQrSystemMode() {
+    try {
+      const localMode = localStorage.getItem("ie_chair_system_mode");
+      const localRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1;
+      if (localMode === "1") {
+        qrCurrentSystemMode = "OFFICIAL";
+      } else if (localMode === "0") {
+        qrCurrentSystemMode = "TEST";
+      }
+      qrCurrentTestRound = Math.min(10, Math.max(1, localRound));
+      updateQrModeBannerUI();
+
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=input_wip`, {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows && rows.length > 0) {
+          const decoded = decodeQrSystemModeInput(rows[0].input_wip);
+          qrCurrentSystemMode = decoded.mode;
+          qrCurrentTestRound = decoded.round;
+          updateQrModeBannerUI();
+        }
+      }
+    } catch (e) {}
+  }
 
   // 讀取所有組別的各工站料號 { "G01": { "ST01": "..." }, "G02": { ... } }
   function getAllGroupStationParts() {
@@ -247,6 +339,28 @@
   function saveAllGroupStationParts(data) {
     localStorage.setItem("ie_chair_group_station_parts", JSON.stringify(data));
   }
+
+  // 🧹 自動清除舊版殘留之預設零件設定 (如「零件5 / 4顆」)，確保預設皆為不勾選且無預設值
+  (function cleanLegacyRawDefaults() {
+    try {
+      if (!localStorage.getItem("ie_chair_raw_clean_v3")) {
+        const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+        Object.keys(all).forEach(g => {
+          if (all[g] && typeof all[g] === "object") {
+            Object.keys(all[g]).forEach(st => {
+              if (all[g][st] && typeof all[g][st] === "object") {
+                all[g][st].hasRaw = false;
+                all[g][st].rawName = "";
+                all[g][st].rawInit = "";
+              }
+            });
+          }
+        });
+        localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(all));
+        localStorage.setItem("ie_chair_raw_clean_v3", "1");
+      }
+    } catch(e) {}
+  })();
 
   // 讀取所有組別各工站的原生零件設定
   function getAllGroupRawConfigs() {
@@ -416,9 +530,9 @@
 
       const stRaw = curRaw[st] || {};
       const subInitVal = (stRaw.subInit !== undefined && stRaw.subInit !== null) ? Math.max(0, parseInt(stRaw.subInit, 10) || 0) : 0;
-      const hasRaw = !!(stRaw.hasRaw || (stRaw.rawInit && stRaw.rawInit > 0));
-      const rawName = stRaw.rawName || "";
-      const rawInit = (stRaw.rawInit !== undefined && stRaw.rawInit !== null) ? stRaw.rawInit : "";
+      const hasRaw = (stRaw.hasRaw === true);
+      const rawName = (hasRaw && stRaw.rawName !== undefined && stRaw.rawName !== null) ? String(stRaw.rawName) : "";
+      const rawInit = (hasRaw && stRaw.rawInit !== undefined && stRaw.rawInit !== null && stRaw.rawInit !== "") ? stRaw.rawInit : "";
 
       const card = document.createElement("div");
       card.className = "station-part-card";
@@ -460,10 +574,10 @@
             </div>
             <div class="raw-config-box" id="rawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; gap:4px; align-items:center; background:#f8fafc; padding:4px 8px; border-radius:6px; border:1px solid #e2e8f0;">
               <span style="font-size:11px; color:#64748b; font-weight:bold; white-space:nowrap;">名稱:</span>
-              <input type="text" class="station-raw-name" data-station="${st}" value="${rawName}" placeholder="名稱 (如:螺絲)" ${isLocked ? 'readonly' : ''} style="padding:2px 6px; font-size:11px; flex:2; border:1px solid #cbd5e1; border-radius:4px; background:${isLocked ? '#e2e8f0' : '#fff'};">
+              <input type="text" class="station-raw-name" data-station="${st}" value="${rawName}" placeholder="" ${isLocked ? 'readonly' : ''} style="padding:2px 6px; font-size:11px; flex:2; border:1px solid #cbd5e1; border-radius:4px; background:${isLocked ? '#e2e8f0' : '#fff'};">
               <span style="font-size:11px; color:#64748b; font-weight:bold; white-space:nowrap;">備料:</span>
               <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:0 4px;">
-                <input type="number" class="station-raw-init" data-station="${st}" value="${rawInit}" placeholder="0" min="0" ${isLocked ? 'readonly' : ''} style="border:none; outline:none; padding:2px 0; font-size:11px; width:30px; text-align:right; background:${isLocked ? '#e2e8f0' : '#fff'};">
+                <input type="number" class="station-raw-init" data-station="${st}" value="${rawInit}" placeholder="" min="0" ${isLocked ? 'readonly' : ''} style="border:none; outline:none; padding:2px 0; font-size:11px; width:36px; text-align:right; background:${isLocked ? '#e2e8f0' : '#fff'};">
                 <span style="font-size:10px; font-weight:bold; color:#64748b; margin-left:2px;">顆</span>
               </div>
             </div>
@@ -481,8 +595,15 @@
 
       const chk = card.querySelector(`#rawCheck_${st}`);
       const box = card.querySelector(`#rawBox_${st}`);
+      const nameInp = card.querySelector(`.station-raw-name`);
+      const initInp = card.querySelector(`.station-raw-init`);
       if (chk && box) {
-        chk.onchange = function() { box.style.display = this.checked ? "flex" : "none"; };
+        chk.onchange = function() {
+          box.style.display = this.checked ? "flex" : "none";
+          // 勾選或取消勾選時皆不自動帶入任何預設值，保持空白讓使用者自行輸入
+          if (nameInp) nameInp.value = "";
+          if (initInp) initInp.value = "";
+        };
       }
 
       grid.appendChild(card);
@@ -554,12 +675,13 @@
       const initInput = document.querySelector(`.station-raw-init[data-station="${st}"]`);
 
       const hasRaw = check ? check.checked : false;
+      const rawInitStr = (hasRaw && initInput) ? initInput.value.trim() : "";
       configs[st] = {
         isRoot: isRoot,
         subInit: isRoot ? 0 : subInitVal,
         hasRaw: hasRaw,
         rawName: (hasRaw && nameInput) ? nameInput.value.trim() : "",
-        rawInit: (hasRaw && initInput && initInput.value !== "") ? parseInt(initInput.value, 10) : 0
+        rawInit: rawInitStr !== "" ? (parseInt(rawInitStr, 10) || 0) : ""
       };
     });
     return configs;
@@ -678,11 +800,16 @@
     document.getElementById("batchPrintArea").style.display = "none";
     document.getElementById("singleResult").style.display = "block";
 
-    document.getElementById("qrTitle").innerHTML = `${group} - ${station} ${partNo ? `<span style='font-size:14px; color:#1e40af; font-weight:bold;'>(完工料號: ${partNo})</span>` : ''}${rawTagHtml}`;
+    const modeBadgeStyle = qrCurrentSystemMode === "OFFICIAL"
+      ? "background:#dcfce7; color:#15803d; border:1px solid #86efac;"
+      : "background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe;";
+    const modeNoteHtml = `<div style="margin-top:8px;"><span id="qrSingleModeNote" style="display:inline-block; font-size:13px; font-weight:bold; padding:4px 10px; border-radius:6px; ${modeBadgeStyle}">${getQrModeTagText()}</span></div>`;
+
+    document.getElementById("qrTitle").innerHTML = `${group} - ${station} ${partNo ? `<span style='font-size:14px; color:#1e40af; font-weight:bold;'>(完工料號: ${partNo})</span>` : ''}${rawTagHtml}${modeNoteHtml}`;
     document.getElementById("urlBox").textContent = currentFullUrl;
 
-    // 設定跳轉按鈕
-    document.getElementById("directLinkBtn").href = currentFullUrl;
+    // 設定跳轉按鈕 (使用相對路徑 timer.html?... 確保本機與雲端點擊皆直接開啟對應計時頁)
+    document.getElementById("directLinkBtn").href = `timer.html?${params.toString()}`;
 
     const qrContainer = document.getElementById("qrcode");
     qrContainer.innerHTML = "";
@@ -761,10 +888,15 @@
 
       const url = `${FIXED_BASE_URL}?${params.toString()}`;
 
+      const modeStyle = qrCurrentSystemMode === "OFFICIAL"
+        ? "background:#dcfce7; color:#15803d; border:1px solid #86efac;"
+        : "background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe;";
+
       const card = document.createElement("div");
       card.className = "station-card";
       card.innerHTML = `
         <h3 style="margin-bottom:4px;">${group} - ${st}</h3>
+        <div class="qr-card-mode-tag" style="font-size:11px; font-weight:bold; padding:2px 6px; border-radius:4px; margin-bottom:4px; ${modeStyle}">${getQrModeTagText()}</div>
         ${partNo ? `<div style="font-size:13px; font-weight:bold; color:#1e40af; margin-bottom:4px;">🏷️ 完工料號：${partNo}</div>` : `<div style="font-size:12px; color:#94a3b8; margin-bottom:4px;">(未設定料號)</div>`}
         ${tagHtml}
         <div class="mini-qr" id="qr_${st}"></div>
@@ -783,14 +915,20 @@
   });
 
   window.addEventListener("storage", async function(e) {
+    if (e.key === "ie_chair_system_mode" || e.key === "ie_chair_test_round") {
+      syncQrSystemMode();
+    }
     if (e.key === "ie_chair_group_station_raw" || e.key === "ie_chair_group_station_parts" || e.key === "ie_chair_selected_group" || (e.key && e.key.startsWith("ie_chair_flow_backup_"))) {
       await renderCurrentGroup();
     }
   });
   window.addEventListener("focus", async function() {
+    syncQrSystemMode();
     await renderCurrentGroup();
   });
 
+  syncQrSystemMode();
+  setInterval(syncQrSystemMode, 3000);
   renderCurrentGroup();
 </script>
 </body>

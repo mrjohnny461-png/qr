@@ -135,34 +135,41 @@
       </select>
     </div>
 
-    <!-- 🎯 實作模式控制 (測試 vs 正式) 與 全域防呆冷卻設定 -->
+    <!-- 🎯 實作模式與測試組數 (僅限管理員調整，現場看板模式僅唯讀顯示) -->
     <div id="modeControlBox" style="display:inline-flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #cbd5e1; padding:4px 10px; border-radius:8px; flex-wrap:wrap;">
       <span style="font-size:13px; font-weight:bold; color:#334155;">🎯 實作模式：</span>
-      <button id="modeTestBtn" onclick="changeSystemMode(0)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;" title="點擊切換為測試練習模式">
-        🧪 測試練習
-      </button>
-      <!-- 🧪 測試組數 (第 1~10 次) 選單與確認按鈕 (學生可直接選擇並確認) -->
-      <span id="testRoundBox" style="display:inline-flex; align-items:center; gap:4px; background:#f3e8ff; padding:2px 8px; border-radius:6px; border:1px solid #d8b4fe;">
-        <span style="font-size:12px; color:#6b21a8; font-weight:bold;">測試組數:</span>
-        <select id="testRoundSelect" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
-          <option value="1">第 1 次測試</option>
-          <option value="2">第 2 次測試</option>
-          <option value="3">第 3 次測試</option>
-          <option value="4">第 4 次測試</option>
-          <option value="5">第 5 次測試</option>
-          <option value="6">第 6 次測試</option>
-          <option value="7">第 7 次測試</option>
-          <option value="8">第 8 次測試</option>
-          <option value="9">第 9 次測試</option>
-          <option value="10">第 10 次測試</option>
-        </select>
-        <button id="confirmTestRoundBtn" type="button" onclick="confirmTestRound()" style="padding:2px 8px; font-size:12px; font-weight:bold; border-radius:4px; border:1px solid #7e22ce; background:#9333ea; color:#fff; cursor:pointer;" title="學生可選擇第幾次測試並點擊確認">
-          ✅ 確認
+      <!-- 🔒 未解鎖管理員時顯示唯讀徽章，學生無法自行調整 -->
+      <span id="readonlyModeBadge" onclick="alert('🔒 實作模式與「第幾次測試」僅限管理員調整！\n請點擊右側「🔒 現場看板模式 (點擊解鎖管理)」輸入管理員密碼後即可修改。')" style="display:inline-flex; align-items:center; gap:4px; padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #d8b4fe; background:#f3e8ff; color:#7e22ce; cursor:pointer; user-select:none;" title="僅限管理員調整（點擊右側解鎖管理員後可切換第 1~10 次測試或正式實作）">
+        🔒 🧪 第 1 次測試 (僅管理員可調)
+      </span>
+      <!-- 🔓 解鎖管理員後才顯示的測試組數與實作模式控制項 -->
+      <span id="adminModeControls" style="display:none; align-items:center; gap:6px; flex-wrap:wrap;">
+        <button id="modeTestBtn" onclick="changeSystemMode(0)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;" title="點擊切換為測試練習模式（僅管理員可調整）">
+          🧪 測試練習
+        </button>
+        <!-- 🧪 測試組數 (第 1~10 次) 選單與確認按鈕 (僅管理員可調整) -->
+        <span id="testRoundBox" style="display:inline-flex; align-items:center; gap:4px; background:#f3e8ff; padding:2px 8px; border-radius:6px; border:1px solid #d8b4fe;">
+          <span style="font-size:12px; color:#6b21a8; font-weight:bold;">測試組數:</span>
+          <select id="testRoundSelect" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
+            <option value="1">第 1 次測試</option>
+            <option value="2">第 2 次測試</option>
+            <option value="3">第 3 次測試</option>
+            <option value="4">第 4 次測試</option>
+            <option value="5">第 5 次測試</option>
+            <option value="6">第 6 次測試</option>
+            <option value="7">第 7 次測試</option>
+            <option value="8">第 8 次測試</option>
+            <option value="9">第 9 次測試</option>
+            <option value="10">第 10 次測試</option>
+          </select>
+          <button id="confirmTestRoundBtn" type="button" onclick="confirmTestRound()" style="padding:2px 8px; font-size:12px; font-weight:bold; border-radius:4px; border:1px solid #7e22ce; background:#9333ea; color:#fff; cursor:pointer;" title="管理員選擇第幾次測試並點擊確認">
+            ✅ 確認
+          </button>
+        </span>
+        <button id="modeOfficialBtn" onclick="changeSystemMode(1)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#64748b; cursor:pointer;" title="點擊切換為正式實作評分模式（僅管理員可調整）">
+          🏆 正式實作 (評分)
         </button>
       </span>
-      <button id="modeOfficialBtn" onclick="changeSystemMode(1)" style="padding:4px 10px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #cbd5e1; background:#fff; color:#64748b; cursor:pointer;" title="點擊切換為正式實作評分模式（需管理員授權）">
-        🏆 正式實作 (評分)
-      </button>
     </div>
 
     <div id="adminControlsArea" style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap;">
@@ -516,6 +523,7 @@ function updateModeButtonsUI() {
   const officialBtn = document.getElementById("modeOfficialBtn");
   const roundSelect = document.getElementById("testRoundSelect");
   const testRoundBox = document.getElementById("testRoundBox");
+  const readonlyBadge = document.getElementById("readonlyModeBadge");
   const cdSelect = document.getElementById("systemCooldownSelect");
   const fcdSelect = document.getElementById("systemFinishCooldownSelect");
 
@@ -526,6 +534,12 @@ function updateModeButtonsUI() {
   }
 
   if (currentSystemMode === 1) {
+    if (readonlyBadge) {
+      readonlyBadge.innerHTML = `🔒 🏆 正式實作 (評分)｜代碼: P01... (僅管理員可調)`;
+      readonlyBadge.style.background = "#dcfce7";
+      readonlyBadge.style.color = "#15803d";
+      readonlyBadge.style.borderColor = "#86efac";
+    }
     if (officialBtn) {
       officialBtn.style.background = "#dcfce7";
       officialBtn.style.color = "#15803d";
@@ -539,6 +553,12 @@ function updateModeButtonsUI() {
     }
     if (testRoundBox) testRoundBox.style.opacity = "0.65";
   } else {
+    if (readonlyBadge) {
+      readonlyBadge.innerHTML = `🔒 🧪 第 ${currentTestRound} 次測試｜代碼: TEST${currentTestRound}-P01... (僅管理員可調)`;
+      readonlyBadge.style.background = "#f3e8ff";
+      readonlyBadge.style.color = "#7e22ce";
+      readonlyBadge.style.borderColor = "#d8b4fe";
+    }
     if (testBtn) {
       testBtn.style.background = "#eff6ff";
       testBtn.style.color = "#1d4ed8";
@@ -552,6 +572,31 @@ function updateModeButtonsUI() {
     }
     if (testRoundBox) testRoundBox.style.opacity = "1";
   }
+}
+
+// 雲端 SYSTEM_MODE 安全寫入 (若尚無 SYSTEM_MODE 紀錄則自動新增，確保跨裝置 100% 同步)
+async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal) {
+  try {
+    const inVal = encodeSystemModeInput(modeVal, roundVal);
+    const outVal = encodeSystemCooldownOutput(startCdVal, finishCdVal);
+    const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=id`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+    const existing = await checkRes.json();
+    if (existing && existing.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ group_id: "SYSTEM", station_id: "SYSTEM_MODE", input_wip: inVal, output_wip: outVal })
+      });
+    }
+  } catch (e) {}
 }
 
 // 重置指定組別的 station_wip 在製品庫存 (回到初始設定備料 subInit / rawInit，保留歷史 event 數據)
@@ -587,13 +632,20 @@ async function resetGroupWipForNewRound(group) {
   } catch (e) {}
 }
 
-// 學生可直接選擇第 1~10 次測試並點擊「✅ 確認」
+// 管理員專屬：選擇第 1~10 次測試並點擊「✅ 確認」
 async function confirmTestRound() {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：「第幾次測試」僅限管理員調整！\n請先點擊「🔒 現場看板模式 (點擊解鎖管理)」輸入管理員密碼。");
+    updateModeButtonsUI();
+    return;
+  }
+  resetAutoLock();
+
   const roundSelect = document.getElementById("testRoundSelect");
   const selectedRound = Math.min(10, Math.max(1, parseInt(roundSelect ? roundSelect.value : "1", 10) || 1));
   const group = document.getElementById("groupSelect").value;
 
-  const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，各工站手機將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」。\n• 本組在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
+  const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，各工站手機與 QR Code 頁面將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」。\n• 本組在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
   if (!ok) {
     if (roundSelect) roundSelect.value = currentTestRound;
     return;
@@ -610,19 +662,9 @@ async function confirmTestRound() {
   }
 
   // 同步寫入雲端 SYSTEM_MODE
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
-      method: "PATCH",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input_wip: encodeSystemModeInput(0, currentTestRound),
-        output_wip: encodeSystemCooldownOutput(currentCooldownSec, currentFinishCooldownSec),
-        updated_at: new Date().toISOString()
-      })
-    });
-  } catch(e) {}
+  await upsertSystemModeCloud(0, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 
-  // 自動將下方表格篩選切至該次測試，方便學生即時確認該次測試資料
+  // 自動將下方表格篩選切至該次測試，方便即時確認該次測試資料
   const filterSelect = document.getElementById("filterTestRoundSelect");
   if (filterSelect) {
     filterSelect.value = String(selectedRound);
@@ -634,11 +676,11 @@ async function confirmTestRound() {
 }
 
 async function changeSystemMode(newMode) {
-  if (newMode === 1 && !isAdminLoggedIn) {
-    alert("⚠️ 權限不足：切換為【🏆 正式實作 (評分)】需管理員權限！請先解鎖管理員。\n（若要切換第 1~10 次測試，請直接於選單選擇後點擊「✅ 確認」）");
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：切換實作模式或調整第幾次測試需管理員權限！\n請先點擊「🔒 現場看板模式 (點擊解鎖管理)」輸入管理員密碼。");
     return;
   }
-  if (isAdminLoggedIn) resetAutoLock();
+  resetAutoLock();
 
   const group = document.getElementById("groupSelect").value;
   if (newMode === 1) {
@@ -659,17 +701,7 @@ async function changeSystemMode(newMode) {
   updateModeButtonsUI();
 
   // 同步更新雲端 station_wip SYSTEM_MODE
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
-      method: "PATCH",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input_wip: encodeSystemModeInput(newMode, currentTestRound),
-        output_wip: encodeSystemCooldownOutput(currentCooldownSec, currentFinishCooldownSec),
-        updated_at: new Date().toISOString()
-      })
-    });
-  } catch(e) {}
+  await upsertSystemModeCloud(newMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 
   alert(`✓ 已成功切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : `🧪 測試練習 (第 ${currentTestRound} 次測試)`}】！現場手機端已同步。`);
   loadAll();
@@ -692,17 +724,7 @@ async function changeSystemCooldown() {
   localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
   localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
 
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
-      method: "PATCH",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input_wip: encodeSystemModeInput(currentSystemMode, currentTestRound),
-        output_wip: encodeSystemCooldownOutput(currentCooldownSec, currentFinishCooldownSec),
-        updated_at: new Date().toISOString()
-      })
-    });
-  } catch(e) {}
+  await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 }
 
 function setTableFilter(filter) {
@@ -771,6 +793,8 @@ function getAdminPin() {
 function updateAdminUI() {
   const adminToggleBtn = document.getElementById("adminToggleBtn");
   const adminCooldownBox = document.getElementById("adminCooldownBox");
+  const readonlyModeBadge = document.getElementById("readonlyModeBadge");
+  const adminModeControls = document.getElementById("adminModeControls");
   const changePinBtn = document.getElementById("changePinBtn");
   const openFlowEditorBtn = document.getElementById("openFlowEditorBtn");
   const deleteAllBtn = document.getElementById("deleteAllBtn");
@@ -785,6 +809,8 @@ function updateAdminUI() {
       adminToggleBtn.style.color = "#1d4ed8";
       adminToggleBtn.style.borderColor = "#93c5fd";
     }
+    if (readonlyModeBadge) readonlyModeBadge.style.display = "none";
+    if (adminModeControls) adminModeControls.style.display = "inline-flex";
     if (adminCooldownBox) adminCooldownBox.style.display = "inline-flex";
     if (changePinBtn) changePinBtn.style.display = "inline-flex";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "inline-flex";
@@ -799,6 +825,8 @@ function updateAdminUI() {
       adminToggleBtn.style.color = "#334155";
       adminToggleBtn.style.borderColor = "#cbd5e1";
     }
+    if (readonlyModeBadge) readonlyModeBadge.style.display = "inline-flex";
+    if (adminModeControls) adminModeControls.style.display = "none";
     if (adminCooldownBox) adminCooldownBox.style.display = "none";
     if (changePinBtn) changePinBtn.style.display = "none";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "none";
@@ -807,6 +835,7 @@ function updateAdminUI() {
     if (adminTh) adminTh.style.display = "none";
     adminTds.forEach(td => td.style.display = "none");
   }
+  updateModeButtonsUI();
 }
 
 function resetAutoLock() {

@@ -316,25 +316,7 @@
       <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <span class="badge" id="groupBadge">--</span>
         <span class="badge" id="stationBadge">--</span>
-        <span class="badge" id="modeBadge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-weight:bold;">🧪 第 1 次測試</span>
-        <!-- 🧪 學生可直接選擇第 1~10 次測試並確認 -->
-        <span id="timerTestRoundBox" style="display:inline-flex; align-items:center; gap:4px; background:#faf5ff; padding:2px 6px; border-radius:6px; border:1px solid #d8b4fe;">
-          <select id="timerTestRoundSelect" style="padding:2px 4px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
-            <option value="1">第 1 次測試</option>
-            <option value="2">第 2 次測試</option>
-            <option value="3">第 3 次測試</option>
-            <option value="4">第 4 次測試</option>
-            <option value="5">第 5 次測試</option>
-            <option value="6">第 6 次測試</option>
-            <option value="7">第 7 次測試</option>
-            <option value="8">第 8 次測試</option>
-            <option value="9">第 9 次測試</option>
-            <option value="10">第 10 次測試</option>
-          </select>
-          <button type="button" id="btnConfirmTimerTestRound" onclick="confirmTimerTestRound()" style="padding:2px 8px; font-size:11px; font-weight:bold; border-radius:4px; border:1px solid #7e22ce; background:#9333ea; color:#fff; cursor:pointer;">
-            ✅ 確認
-          </button>
-        </span>
+        <span class="badge" id="modeBadge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-weight:bold; user-select:none;" title="實作模式與第幾次測試由監控中心【管理員】統一設定，學生端僅供檢視">🔒 🧪 第 1 次測試</span>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="sync-status"><span class="pulse-dot"></span>即時同步中</span>
@@ -547,13 +529,29 @@ if (isNaN(subInitCount) || subInitCount < 0) subInitCount = 0;
 
 if (!hasRawPart) {
   try {
+    if (!localStorage.getItem("ie_chair_raw_clean_v3")) {
+      const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+      Object.keys(all).forEach(g => {
+        if (all[g] && typeof all[g] === "object") {
+          Object.keys(all[g]).forEach(st => {
+            if (all[g][st] && typeof all[g][st] === "object") {
+              all[g][st].hasRaw = false;
+              all[g][st].rawName = "";
+              all[g][st].rawInit = "";
+            }
+          });
+        }
+      });
+      localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(all));
+      localStorage.setItem("ie_chair_raw_clean_v3", "1");
+    }
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
     const groupRaw = allRaw[groupId] || {};
     const stRaw = groupRaw[stationId] || {};
-    if (stRaw.hasRaw || (stRaw.rawInit && stRaw.rawInit > 0)) {
+    if (stRaw.hasRaw === true && stRaw.rawName) {
       hasRawPart = true;
       rawPartName = stRaw.rawName || "";
-      rawInitCount = stRaw.rawInit !== undefined ? stRaw.rawInit : 0;
+      rawInitCount = (stRaw.rawInit !== undefined && stRaw.rawInit !== "") ? (parseInt(stRaw.rawInit, 10) || 0) : 0;
     }
   } catch (e) {}
 }
@@ -646,24 +644,17 @@ let timerInterval = null;
 
 function updateModeBadgeUI() {
   const mb = document.getElementById("modeBadge");
-  const trBox = document.getElementById("timerTestRoundBox");
-  const trSelect = document.getElementById("timerTestRoundSelect");
-  if (trSelect && document.activeElement !== trSelect) {
-    trSelect.value = String(currentTestRound);
-  }
   if (!mb) return;
   if (currentSystemMode === "OFFICIAL") {
-    mb.innerHTML = "🏆 正式實作";
+    mb.innerHTML = "🔒 🏆 正式實作 (僅管理員可調)";
     mb.style.background = "#fef3c7";
     mb.style.color = "#b45309";
     mb.style.borderColor = "#fde68a";
-    if (trBox) trBox.style.display = "none";
   } else {
-    mb.innerHTML = `🧪 第 ${currentTestRound} 次測試`;
+    mb.innerHTML = `🔒 🧪 第 ${currentTestRound} 次測試 (僅管理員可調)`;
     mb.style.background = "#f3e8ff";
     mb.style.color = "#7e22ce";
     mb.style.borderColor = "#d8b4fe";
-    if (trBox) trBox.style.display = "inline-flex";
   }
   if (typeof updateAudioButtonLabel === "function") updateAudioButtonLabel();
 }
@@ -673,76 +664,6 @@ function updateCooldownBadgeUI() {
   if (cb) cb.textContent = currentCooldownSec;
   const fcb = document.getElementById("finishCooldownBadge");
   if (fcb) fcb.textContent = currentFinishCooldownSec;
-}
-
-// 學生於手機端選擇第 1~10 次測試並點擊「✅ 確認」
-async function confirmTimerTestRound() {
-  if (isWorking) {
-    alert("⚠️ 目前正在計時作業中，請先完成本件作業後再切換測試組數！");
-    const trSelect = document.getElementById("timerTestRoundSelect");
-    if (trSelect) trSelect.value = String(currentTestRound);
-    return;
-  }
-  const trSelect = document.getElementById("timerTestRoundSelect");
-  const selectedRound = Math.min(10, Math.max(1, parseInt(trSelect ? trSelect.value : "1", 10) || 1));
-
-  const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n確認後，全組將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」，且本組在製品庫存將歸零並恢復初始備料（先前各次測試紀錄均完整保留）！`);
-  if (!ok) {
-    if (trSelect) trSelect.value = String(currentTestRound);
-    return;
-  }
-
-  currentSystemMode = "TEST";
-  currentTestRound = selectedRound;
-  try {
-    localStorage.setItem("ie_chair_test_round", String(selectedRound));
-  } catch(e) {}
-  updateModeBadgeUI();
-
-  try {
-    // 1. 同步更新雲端 SYSTEM_MODE
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
-      method: "PATCH",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        input_wip: encodeSystemModeInput("TEST", currentTestRound),
-        output_wip: encodeSystemCooldownOutput(currentCooldownSec, currentFinishCooldownSec),
-        updated_at: new Date().toISOString()
-      })
-    });
-
-    // 2. 將本組 station_wip 歸零並還原初始備料
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}`, {
-      method: "PATCH",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
-    });
-    if (!isRootStation && subInitCount > 0 && wipRecordId) {
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: subInitCount, output_wip: 0, updated_at: new Date().toISOString() })
-      });
-    }
-    if (isMixedStation() && rawWipRecordId) {
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${rawWipRecordId}`, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: rawInitCount, output_wip: 0, updated_at: new Date().toISOString() })
-      });
-    }
-  } catch(e) {}
-
-  prevKitCount = null;
-  scanCooldownUntil = 0;
-  rootWaitingNextChime = false;
-  await fetchWipData();
-  await syncHistoryFromDb();
-  await computeKitting();
-  showScanBanner(`✓ 已確認切換為【🧪 第 ${selectedRound} 次測試】！可開始掃碼作業`, "success", 3500);
 }
 
 // 初始化
@@ -757,16 +678,6 @@ async function init() {
     await computeKitting();
     window.isTimerReadyForChime = true;
     if (typeof updateAudioButtonLabel === "function") updateAudioButtonLabel();
-    const trSel = document.getElementById("timerTestRoundSelect");
-    if (trSel) {
-      trSel.addEventListener("change", function() {
-        const previewRound = parseInt(this.value, 10) || 1;
-        unlockAudioEngine();
-        playDingDongSound(previewRound);
-        const prof = getChimeProfile(previewRound);
-        showScanBanner(`🔊 預覽【第 ${previewRound} 組/次】專屬提示音：${prof.label}（含震動）`, "info", 2500);
-      });
-    }
     showMsg("就緒，請將鏡頭對準本站桌牌開工", "#10b981");
 
     // 📷 自動啟動常駐相機 (全自動純掃碼模式，不需點擊按鈕)
@@ -781,13 +692,33 @@ async function init() {
   }
 }
 
-// 取得工站拓撲關係
+// 取得工站拓撲關係 (含本地備份與 URL 參數多重保護，確保下游站絕不誤判為起始站)
 async function updateFlowInfo() {
-  const flowRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`,
-    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
-  );
-  const flowData = await flowRes.json();
+  let flowData = [];
+  try {
+    const flowRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    if (flowRes.ok) {
+      const fetched = await flowRes.json();
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        flowData = fetched;
+        try { localStorage.setItem(`ie_chair_flow_backup_${groupId}`, JSON.stringify(fetched)); } catch(e) {}
+      }
+    }
+  } catch(e) {}
+
+  // 若雲端暫時無回應，自動使用本地備份流程
+  if (flowData.length === 0) {
+    try {
+      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${groupId}`);
+      if (backupRaw) {
+        const parsed = JSON.parse(backupRaw);
+        if (Array.isArray(parsed) && parsed.length > 0) flowData = parsed;
+      }
+    } catch(e) {}
+  }
 
   feederStations = flowData
     .filter(f => (f.next_station_id || "").trim() === stationId)
@@ -796,10 +727,13 @@ async function updateFlowInfo() {
   const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
   nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
 
+  // 防呆保護：若 URL 明確帶有 sub_init (非起始站參數) 或非 ST01 且 flowData 為空，絕不誤判為起始站
+  const explicitNonRoot = urlParams.has("sub_init") && !urlIsRoot;
+
   const feederTextEl = document.getElementById("feederStationListText");
   const nextTextEl = document.getElementById("nextStationText");
 
-  if (feederStations.length === 0) {
+  if (feederStations.length === 0 && !explicitNonRoot) {
     isRootStation = true;
     feederTextEl.textContent = "🟢 起點第一站（無前置工站，原料直接投入）";
     feederTextEl.style.color = "#16a34a";
@@ -809,7 +743,9 @@ async function updateFlowInfo() {
     }
   } else {
     isRootStation = false;
-    feederTextEl.textContent = `${feederStations.join(" + ")} (共 ${feederStations.length} 站)`;
+    feederTextEl.textContent = feederStations.length > 0
+      ? `${feederStations.join(" + ")} (共 ${feederStations.length} 站)`
+      : "前置工站";
     feederTextEl.style.color = "#2563eb";
     document.getElementById("feederStatusCard").style.display = "block";
     if (!hasRawPart) {
@@ -914,7 +850,7 @@ async function computeKitting() {
     return;
   }
 
-  // 抓取全組 station_wip
+  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據)
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
@@ -922,8 +858,20 @@ async function computeKitting() {
   const allWips = await res.json();
   const wipMap = {};
   allWips.forEach(w => {
-    wipMap[(w.station_id || "").trim()] = w;
+    const stKey = (w.station_id || "").trim();
+    if (!wipMap[stKey]) {
+      wipMap[stKey] = { ...w, input_wip: w.input_wip || 0, output_wip: w.output_wip || 0 };
+    } else {
+      wipMap[stKey].input_wip = Math.max(wipMap[stKey].input_wip || 0, w.input_wip || 0);
+      wipMap[stKey].output_wip = Math.max(wipMap[stKey].output_wip || 0, w.output_wip || 0);
+    }
   });
+
+  // 同步本站自己的最新雲端 WIP 數值，防止歷史篩選覆蓋導致 currentOutWip 被誤歸零
+  if (wipMap[stationId]) {
+    manualBufferWip = wipMap[stationId].input_wip || 0;
+    currentOutWip = wipMap[stationId].output_wip || 0;
+  }
 
   // 本站累計已完工/開工總件數
   const totalProducedOrWorking = currentOutWip + (isWorking ? 1 : 0);
@@ -982,7 +930,11 @@ async function computeKitting() {
       alertMaterialReady();
     }
   } else if (isWorking || kitCount <= 0) {
-    pendingMaterialChime = false;
+    if (typeof stopAllMaterialChimes === "function") {
+      stopAllMaterialChimes();
+    } else {
+      pendingMaterialChime = false;
+    }
   }
 
   refreshUiNumbers();
@@ -1116,7 +1068,8 @@ async function updateWipDb(newIn, newOut) {
   manualBufferWip = newIn;
   currentOutWip = newOut;
 
-  await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}`, {
+  // 同時以 group_id + station_id 更新，確保雲端所有對應紀錄皆一致更新
+  await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(stationId)}`, {
     method: "PATCH",
     headers: {
       apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
@@ -1213,12 +1166,14 @@ async function autoSyncLive() {
     } catch(e) {}
 
     const wipRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/station_wip?id=eq.${wipRecordId}&select=input_wip,output_wip`,
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(stationId)}&select=id,input_wip,output_wip`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     const wipData = await wipRes.json();
     if (wipData.length > 0) {
-      manualBufferWip = wipData[0].input_wip || 0;
+      wipRecordId = wipData[0].id;
+      manualBufferWip = Math.max(...wipData.map(w => w.input_wip || 0));
+      currentOutWip = Math.max(...wipData.map(w => w.output_wip || 0));
     }
 
     if (rawWipRecordId) {
@@ -1482,6 +1437,25 @@ function getAudioContext() {
   }
 }
 
+// 立即停止所有待命到料提示音與震動（當缺料 kitCount <= 0 或作業計時中時強制靜音）
+function stopAllMaterialChimes() {
+  pendingMaterialChime = false;
+  if (!isRootStation) {
+    rootWaitingNextChime = false;
+  }
+  try {
+    if (navigator.vibrate) navigator.vibrate(0);
+  } catch (e) {}
+  try {
+    Object.values(chimeWavAudioCache).forEach(a => {
+      if (a && !a.paused) {
+        a.pause();
+        a.currentTime = 0;
+      }
+    });
+  } catch (e) {}
+}
+
 function unlockAudioEngine() {
   const ctx = getAudioContext();
   if (ctx) {
@@ -1512,7 +1486,7 @@ function unlockAudioEngine() {
 function testAudioSound() {
   unlockAudioEngine();
   const prof = getChimeProfile();
-  playDingDongSound();
+  playDingDongSound(undefined, true);
   showScanBanner(`🔊 播放【${groupId}｜第 ${currentTestRound} 次測試】專屬提示音：${prof.label}（含震動）`, "info", 2800);
 }
 
@@ -1564,7 +1538,18 @@ async function playAudioFeedback(type) {
 }
 
 // 播放目前組別/測試組數專屬的「可開工提示音 + 震動」
-async function playDingDongSound(overrideRound) {
+async function playDingDongSound(overrideRound, isManualTest = false) {
+  // 🛡️ 嚴格防呆：若非手動點擊測試按鈕，只要正在計時作業中，或非起始站且可開工數 kitCount <= 0（缺料），一律強制中斷並禁止發聲！
+  if (!isManualTest) {
+    if (isWorking || (!isRootStation && kitCount <= 0)) {
+      stopAllMaterialChimes();
+      return;
+    }
+    if (isRootStation && Date.now() < scanCooldownUntil) {
+      return;
+    }
+  }
+
   lastMaterialChimeTime = Date.now();
   const prof = getChimeProfile(overrideRound);
 
@@ -1623,6 +1608,12 @@ async function playDingDongSound(overrideRound) {
 
 // 🔔 料足聲光與震動提示 (新物料齊套瞬間及每 2 秒高頻觸發強烈脈衝、專屬音效與震動)
 function alertMaterialReady() {
+  // 🛡️ 若為下游工站且缺料 (kitCount <= 0) 或作業計時中，絕不觸發任何到料提示音或綠燈脈衝
+  if (isWorking || (!isRootStation && kitCount <= 0)) {
+    stopAllMaterialChimes();
+    updateBreathingLight();
+    return;
+  }
   playDingDongSound();
   updateBreathingLight();
 
@@ -1717,7 +1708,9 @@ function updateScannerBadge() {
 
   // 🔔 高頻率可開工提示音與震動迴圈 (每 2.0 秒自動觸發一次，不需等待網路輪詢)
   const isOfficialDone = (currentSystemMode === "OFFICIAL" && currentOutWip >= 1);
-  if (window.isTimerReadyForChime && !isWorking && !isOfficialDone && now >= scanCooldownUntil && (isRootStation || kitCount > 0)) {
+  if (!isRootStation && kitCount <= 0) {
+    stopAllMaterialChimes();
+  } else if (window.isTimerReadyForChime && !isWorking && !isOfficialDone && now >= scanCooldownUntil && (isRootStation || kitCount > 0)) {
     if (rootWaitingNextChime) {
       rootWaitingNextChime = false;
       alertMaterialReady();
@@ -1815,6 +1808,7 @@ async function handleStartWork(source = "SCAN") {
   }
 
   isWorking = true;
+  stopAllMaterialChimes();
   snapWipBeforeStart = kitCount; // 鎖定開工瞬間齊套數
   await computeKitting();
 
@@ -1895,6 +1889,9 @@ async function handleFinishWork(source = "SCAN") {
     isWorking = false;
     document.getElementById("timerDisplay").textContent = "00:00.0";
     await computeKitting();
+    if (!isRootStation && kitCount <= 0) {
+      stopAllMaterialChimes();
+    }
 
     playAudioFeedback("FINISH");
     const finishMsg = isRootStation
@@ -2262,7 +2259,10 @@ async function syncHistoryFromDb() {
       return getTestRoundFromProductId(e.product_id) === currentTestRound;
     });
 
-    currentOutWip = modeEvents.length;
+    // 🛡️ 關鍵修正：絕不讓歷史篩選將已完工之 station_wip.output_wip 誤歸零，確保與工蓋螢幕的齊套計算 100% 一致！
+    if (modeEvents.length > currentOutWip) {
+      currentOutWip = modeEvents.length;
+    }
     document.getElementById("wipOutText").textContent = currentOutWip;
     document.getElementById("cycleTotalBadge").textContent = `${isTestMode ? `🧪 第 ${currentTestRound} 次測試完成` : "🏆 正式完成"}：${currentOutWip} 件`;
 

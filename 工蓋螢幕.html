@@ -230,25 +230,25 @@
     </div>
   </div>
 
-  <!-- 區塊 2：工站統計摘要 (Cycle Time, 等待時間, 稼動率, 生產活動節拍時間) -->
+  <!-- 區塊 2：工站統計摘要 (Cycle Time, 等待時間, 稼動率, 生產活動 Cycle Time) -->
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-      <h2 style="margin:0;">2. 統計摘要與精實節拍時間分析（依工站）</h2>
+      <h2 style="margin:0;">2. 統計摘要與產線 Cycle Time 分析（依工站）</h2>
       <span style="font-size:13px; color:#475569; background:#f1f5f9; padding:4px 10px; border-radius:6px;">🎯 產線瓶頸判定：<b>該組平均 Cycle Time 之最大值</b></span>
     </div>
     <p style="color:#64748b; font-size:14px; margin:6px 0 10px 0;">
-      說明：<b>節拍時間 (Takt Time) = 該次生產活動總耗時（首件開工至末件完工）÷ 共產出成品組數</b>。等待時間 = 站內換件閒置 + 下游等料飢餓時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
+      說明：<b>本次生產活動 Cycle Time = 該次生產活動總耗時（首件開工至末件完工）÷ 共產出成品組數</b>。等待時間 = 站內換件閒置 + 下游等料飢餓時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
     </p>
 
-    <!-- ⏱️ 精實生產：本次生產活動節拍時間 (Takt Time) 即時計算看板 (常駐顯示) -->
+    <!-- ⏱️ 本次生產活動 Cycle Time 即時計算看板 (常駐顯示) -->
     <div id="taktTimeBanner" style="display:block; background:linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border:1px solid #7dd3fc; border-radius:10px; padding:12px 16px; margin-bottom:12px;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
           <span style="font-size:18px;">⏱️</span>
-          <span style="font-weight:800; color:#0369a1; font-size:15px;">本次生產活動節拍時間 (Activity Takt Time) 計算分析</span>
+          <span style="font-weight:800; color:#0369a1; font-size:15px;">本次生產活動 Cycle Time 計算分析</span>
           <span id="taktRoundTag" style="font-size:12px; font-weight:bold; padding:2px 8px; border-radius:6px; background:#fff; color:#0284c7; border:1px solid #bae6fd;">--</span>
         </div>
-        <span style="font-size:12px; color:#0369a1; font-weight:600;">📐 公式：節拍時間 = 該次活動總生產時間 ÷ 共產出組數</span>
+        <span style="font-size:12px; color:#0369a1; font-weight:600;">📐 公式：Cycle Time = 該次活動總生產時間 ÷ 共產出組數</span>
       </div>
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap:10px;">
         <div style="background:#fff; border:1px solid #bae6fd; border-radius:8px; padding:10px 12px;">
@@ -262,12 +262,12 @@
           <div id="taktTimeRangeText" style="font-size:11px; color:#64748b; margin-top:2px;">首件開工 ➔ 末件完工</div>
         </div>
         <div style="background:#ecfeff; border:2px solid #06b6d4; border-radius:8px; padding:10px 12px;">
-          <div style="font-size:12px; color:#0e7490; font-weight:bold;">🎯 本次生產活動節拍時間</div>
+          <div style="font-size:12px; color:#0e7490; font-weight:bold;">🎯 本次生產活動 Cycle Time</div>
           <div id="taktValueText" style="font-size:24px; font-weight:900; color:#0891b2; margin-top:2px;">-- 秒/組</div>
           <div id="taktFormulaDetailText" style="font-size:11px; color:#0e7490; margin-top:2px; font-weight:600;">尚無產出組數</div>
         </div>
         <div style="background:#fff; border:1px solid #bae6fd; border-radius:8px; padding:10px 12px;">
-          <div style="font-size:12px; color:#64748b; font-weight:bold;">⚖️ 精實產線平衡與瓶頸比對</div>
+          <div style="font-size:12px; color:#64748b; font-weight:bold;">⚖️ 產線平衡與瓶頸站 CT 比對</div>
           <div id="taktVsBottleneckText" style="font-size:14px; font-weight:800; color:#334155; margin-top:4px;">--</div>
           <div id="taktSteadyIntervalText" style="font-size:11px; color:#64748b; margin-top:4px;">--</div>
         </div>
@@ -289,7 +289,7 @@
           <th>生產料號</th>
           <th>筆數</th>
           <th>平均 Cycle Time (秒)</th>
-          <th>與本次節拍比較</th>
+          <th>與本次 Cycle Time 比較</th>
           <th>總作業時間 (秒)</th>
           <th>平均等待時間 (秒)</th>
           <th>總等待時間 (秒)</th>
@@ -2065,7 +2065,7 @@ function showStats(data) {
     if (elVsBottle) {
       if (activityTaktSec !== null && maxAvgCycle > 0) {
         const diff = (activityTaktSec - maxAvgCycle).toFixed(1);
-        elVsBottle.innerHTML = `瓶頸站 <b>${bottleneckStation}</b> CT: <b style="color:#dc2626;">${maxAvgCycle.toFixed(1)}s</b> ｜ 節拍含傳遞/首件分攤: <b>${diff >= 0 ? '+' + diff : diff}s</b>`;
+        elVsBottle.innerHTML = `瓶頸站 <b>${bottleneckStation}</b> CT: <b style="color:#dc2626;">${maxAvgCycle.toFixed(1)}s</b> ｜ Cycle Time 含傳遞/首件分攤: <b>${diff >= 0 ? '+' + diff : diff}s</b>`;
       } else {
         elVsBottle.textContent = "--";
       }
@@ -2116,14 +2116,14 @@ function showStats(data) {
       partCell += `<br><span style="font-size:11px; color:#b45309; font-weight:bold;">📦 含${rawCfg.rawName}</span>`;
     }
 
-    // 計算該站平均 CT 與本次活動節拍時間之比對
+    // 計算該站平均 CT 與本次活動 Cycle Time 之比對
     let taktCompareHtml = `<span style="color:#94a3b8;">-</span>`;
     if (activityTaktSec !== null && activityTaktSec > 0 && avgCycle > 0) {
       const ratioPct = ((avgCycle / activityTaktSec) * 100).toFixed(0);
       const delta = (avgCycle - activityTaktSec).toFixed(1);
       const sign = Number(delta) > 0 ? `+${delta}s` : `${delta}s`;
       const color = Number(delta) > 0 ? "#dc2626" : "#0284c7";
-      taktCompareHtml = `<span style="color:${color}; font-weight:bold;">佔節拍 ${ratioPct}%</span> <span style="font-size:11px; color:#64748b;">(${sign})</span>`;
+      taktCompareHtml = `<span style="color:${color}; font-weight:bold;">佔 Cycle Time ${ratioPct}%</span> <span style="font-size:11px; color:#64748b;">(${sign})</span>`;
     }
 
     const rowData = [
@@ -2170,7 +2170,7 @@ function showStats(data) {
     trTotal.style.fontWeight = "bold";
 
     const totalTaktCellHtml = activityTaktSec !== null
-      ? `<div style="color:#0891b2; font-size:14px; font-weight:800;">⏱️ 節拍: ${activityTaktSec.toFixed(1)} 秒/組</div><div style="font-size:11px; color:#64748b; font-weight:normal;">(${activityTotalSec.toFixed(1)}s ÷ ${activityOutputSets}組)</div>`
+      ? `<div style="color:#0891b2; font-size:14px; font-weight:800;">⏱️ Cycle Time: ${activityTaktSec.toFixed(1)} 秒/組</div><div style="font-size:11px; color:#64748b; font-weight:normal;">(${activityTotalSec.toFixed(1)}s ÷ ${activityOutputSets}組)</div>`
       : `<span style="color:#94a3b8;">-</span>`;
 
     const totalRowData = [
@@ -2225,8 +2225,8 @@ document.getElementById("downloadBtn").onclick = () => {
   if (window.currentActivityTakt && window.currentActivityTakt.taktSec !== null) {
     const t = window.currentActivityTakt;
     csvRows.push("");
-    csvRows.push("【本次生產活動節拍時間 (Activity Takt Time) 統計摘要】");
-    csvRows.push("計算場次,共產出成品組數(組),該次活動總耗時(秒),本次活動節拍時間(秒/組)");
+    csvRows.push("【本次生產活動 Cycle Time 統計摘要】");
+    csvRows.push("計算場次,共產出成品組數(組),該次活動總耗時(秒),本次活動 Cycle Time(秒/組)");
     csvRows.push(`"${t.roundLabel}",${t.outputSets},${t.totalSec.toFixed(1)},${t.taktSec.toFixed(1)}`);
   }
 

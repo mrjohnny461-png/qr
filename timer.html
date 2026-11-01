@@ -2144,13 +2144,13 @@ function validateQrContent(text) {
     };
   }
 
-  // 2. 偵測條碼中的工站 (支援 &station=ST01 或 獨立單字 ST01~ST08)
+  // 2. 偵測條碼中的工站 (支援 &station=ST01 或 獨立單字 ST01~ST10)
   let detectedSt = null;
   const stParamMatch = raw.match(/[?&]station=(ST\d+)/i);
   if (stParamMatch) {
     detectedSt = stParamMatch[1].toUpperCase();
   } else {
-    const stWordMatch = raw.match(/(?:^|[^a-zA-Z0-9])(ST0[1-8])(?:$|[^a-zA-Z0-9])/i);
+    const stWordMatch = raw.match(/(?:^|[^a-zA-Z0-9])(ST0[1-9]|ST10)(?:$|[^a-zA-Z0-9])/i);
     if (stWordMatch) {
       detectedSt = stWordMatch[1].toUpperCase();
     }

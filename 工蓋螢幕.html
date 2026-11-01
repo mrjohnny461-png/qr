@@ -358,7 +358,7 @@
       <div id="flowRowsContainer" style="max-height:220px; overflow-y:auto; margin: 12px 0;"></div>
       <div style="display:flex; gap:10px;">
         <button onclick="addFlowRow()" class="btn-secondary">+ 新增銜接關係</button>
-        <button onclick="presetStandardFlow()" style="background:#f1f5f9;">恢復 1→8 標準直線</button>
+        <button onclick="presetStandardFlow()" style="background:#f1f5f9;">恢復 1→10 標準直線</button>
       </div>
 
       <!-- 📦 原生零件投料設定區塊 -->
@@ -391,7 +391,7 @@ const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
 mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
 
 let currentEvents = [];
-const allStations = ["ST01","ST02","ST03","ST04","ST05","ST06","ST07","ST08"];
+const allStations = ["ST01","ST02","ST03","ST04","ST05","ST06","ST07","ST08","ST09","ST10"];
 let autoRefreshTimer = null;
 let refreshInterval = 3000;
 

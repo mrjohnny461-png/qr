@@ -210,7 +210,30 @@
   <!-- 區塊 1：工站流程順序圖與 站前/站後 WIP 看板 -->
   <div class="card" id="flowCard">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-      <h2 style="margin:0;">1. 工站順序圖與在製品 (WIP) 即時看板</h2>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <h2 style="margin:0; display:flex; align-items:center; gap:8px;">
+          <span>1. 工站順序圖與在製品 (WIP) 即時看板</span>
+          <span id="flowGroupTitleBadge" style="background:#eff6ff; color:#1d4ed8; border:1px solid #93c5fd; padding:2px 10px; border-radius:8px; font-size:16px; font-weight:800;">【G02】</span>
+        </h2>
+        <div style="display:inline-flex; align-items:center; gap:6px; background:#faf5ff; border:1px solid #d8b4fe; padding:4px 10px; border-radius:8px;">
+          <span style="font-size:12px; font-weight:bold; color:#6b21a8;">👁️ 檢視場次：</span>
+          <select id="flowViewRoundSelect" onchange="onFlowViewRoundChange(this.value)" style="padding:2px 8px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #c084fc; background:#fff; color:#6b21a8; cursor:pointer;" title="可隨時切換檢視第 1~10 次測試或正式實作的獨立流程圖與成績，互不影響">
+            <option value="AUTO">🎯 自動跟隨目前場次</option>
+            <option value="OFFICIAL">🏆 檢視：正式實作 (評分)</option>
+            <option value="1">🧪 檢視：第 1 次測試</option>
+            <option value="2">🧪 檢視：第 2 次測試</option>
+            <option value="3">🧪 檢視：第 3 次測試</option>
+            <option value="4">🧪 檢視：第 4 次測試</option>
+            <option value="5">🧪 檢視：第 5 次測試</option>
+            <option value="6">🧪 檢視：第 6 次測試</option>
+            <option value="7">🧪 檢視：第 7 次測試</option>
+            <option value="8">🧪 檢視：第 8 次測試</option>
+            <option value="9">🧪 檢視：第 9 次測試</option>
+            <option value="10">🧪 檢視：第 10 次測試</option>
+          </select>
+          <span id="flowViewRoundStatusTag" style="font-size:11px; font-weight:bold; color:#7e22ce; background:#f3e8ff; padding:2px 6px; border-radius:4px;">目前場次</span>
+        </div>
+      </div>
       <div style="display:flex; align-items:center; gap:10px;">
         <a id="gotoQrcodeBtn" href="qrcode.html" target="_blank" style="font-size:13px; font-weight:bold; color:#2563eb; background:#eff6ff; padding:6px 12px; border-radius:8px; border:1px solid #bfdbfe; text-decoration:none; display:none; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
           🖨️ 前往【--】QR Code 桌牌與料號設定 ❯
@@ -762,6 +785,91 @@ async function changeSystemCooldown() {
   await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 }
 
+// 取得目前看板（流程圖 + 統計摘要）正在檢視的單一場次設定，確保各場次流程圖與成績完全獨立互不影響
+function getEffectiveViewRound() {
+  if (currentTableFilter === "OFFICIAL") {
+    return {
+      mode: "OFFICIAL",
+      round: null,
+      label: "🏆 正式實作 (評分)",
+      isLive: currentSystemMode === 1
+    };
+  }
+  if (currentTableFilter === "TEST" && currentTestRoundFilter !== "ALL_TEST") {
+    const r = parseInt(currentTestRoundFilter, 10) || 1;
+    return {
+      mode: "TEST",
+      round: r,
+      label: `🧪 第 ${r} 次測試`,
+      isLive: (currentSystemMode === 0 && currentTestRound === r)
+    };
+  }
+  // 預設（AUTO）：自動鎖定當前系統進行中的場次，確保切換至第 2 次測試時不會混入第 1 次測試的成績
+  if (currentSystemMode === 1) {
+    return {
+      mode: "OFFICIAL",
+      round: null,
+      label: "🏆 正式實作 (評分)",
+      isLive: true
+    };
+  }
+  return {
+    mode: "TEST",
+    round: currentTestRound,
+    label: `🧪 第 ${currentTestRound} 次測試`,
+    isLive: true
+  };
+}
+
+function isEventInViewRound(r, viewRound) {
+  if (!r || r.status !== "COMPLETED") return false;
+  const isT = isTestProductId(r.product_id);
+  if (viewRound.mode === "OFFICIAL") return !isT;
+  if (!isT) return false;
+  const rRound = getTestRoundFromProductId(r.product_id) || 1;
+  return rRound === viewRound.round;
+}
+
+function updateFlowViewRoundUI() {
+  const flowSel = document.getElementById("flowViewRoundSelect");
+  const statusTag = document.getElementById("flowViewRoundStatusTag");
+  const viewRound = getEffectiveViewRound();
+
+  if (flowSel) {
+    if (currentTableFilter === "OFFICIAL") {
+      flowSel.value = "OFFICIAL";
+    } else if (currentTableFilter === "TEST" && currentTestRoundFilter !== "ALL_TEST") {
+      flowSel.value = String(currentTestRoundFilter);
+    } else {
+      flowSel.value = "AUTO";
+    }
+  }
+
+  if (statusTag) {
+    if (viewRound.isLive) {
+      statusTag.textContent = `🟢 目前進行中：${viewRound.label}`;
+      statusTag.style.background = "#dcfce7";
+      statusTag.style.color = "#15803d";
+    } else {
+      statusTag.textContent = `📁 歷史封存成績：${viewRound.label}（不受後續場次影響）`;
+      statusTag.style.background = "#fef3c7";
+      statusTag.style.color = "#b45309";
+    }
+  }
+}
+
+function onFlowViewRoundChange(val) {
+  if (val === "AUTO") {
+    setTableFilter("ALL");
+  } else if (val === "OFFICIAL") {
+    setTableFilter("OFFICIAL");
+  } else {
+    const sel = document.getElementById("filterTestRoundSelect");
+    if (sel) sel.value = String(val);
+    setTestRoundTableFilter(String(val));
+  }
+}
+
 function setTableFilter(filter) {
   currentTableFilter = filter;
   if (filter !== "TEST") {
@@ -786,8 +894,13 @@ function setTableFilter(filter) {
       btns[k].style.borderColor = "#cbd5e1";
     }
   });
+  updateFlowViewRoundUI();
   showTable(currentEvents);
   showStats(currentEvents);
+  const group = document.getElementById("groupSelect").value;
+  if (group !== "ALL") {
+    renderFlowDiagram(group);
+  }
 }
 
 function setTestRoundTableFilter(val) {
@@ -812,8 +925,13 @@ function setTestRoundTableFilter(val) {
       }
     });
   }
+  updateFlowViewRoundUI();
   showTable(currentEvents);
   showStats(currentEvents);
+  const group = document.getElementById("groupSelect").value;
+  if (group !== "ALL") {
+    renderFlowDiagram(group);
+  }
 }
 
 const ADMIN_PIN_KEY = "ie_chair_admin_pin";
@@ -1059,12 +1177,15 @@ async function loadAll() {
       }
     } catch(e) {}
 
+    updateFlowViewRoundUI();
     showTable(currentEvents);
     showStats(currentEvents);
     document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
 
     if (group !== "ALL") {
       document.getElementById("flowCard").style.display = "block";
+      const flowGrpBadge = document.getElementById("flowGroupTitleBadge");
+      if (flowGrpBadge) flowGrpBadge.textContent = `【${group}】`;
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) {
         gotoBtn.href = `qrcode.html?group=${encodeURIComponent(group)}`;
@@ -1137,11 +1258,22 @@ async function renderFlowDiagram(group) {
     return;
   }
 
+  const viewRound = getEffectiveViewRound();
+  const roundEvents = currentEvents.filter(r =>
+    (r.group_id || "").trim() === group && isEventInViewRound(r, viewRound)
+  );
+  const roundOutMap = {};
+  roundEvents.forEach(r => {
+    const st = (r.station_id || "").trim();
+    if (st) roundOutMap[st] = (roundOutMap[st] || 0) + 1;
+  });
+
   const wipMap = {};
   wips.forEach(w => {
-    wipMap[(w.station_id || "").trim()] = {
+    const stKey = (w.station_id || "").trim();
+    wipMap[stKey] = {
       inWip: w.input_wip || 0,
-      outWip: w.output_wip || 0
+      outWip: roundOutMap[stKey] || 0
     };
   });
 
@@ -1149,6 +1281,16 @@ async function renderFlowDiagram(group) {
   flows.forEach(f => {
     if (f.station_id) stationSet.add(f.station_id.trim());
     if (f.next_station_id) stationSet.add(f.next_station_id.trim());
+  });
+
+  // 確保每個上線工站在該檢視場次都有獨立且精準的完工數 (outWip)，讓第 1 次與第 2 次測試流程圖成績完全獨立互不影響
+  stationSet.forEach(stId => {
+    if (stId === "SYSTEM_MODE") return;
+    if (!wipMap[stId]) {
+      wipMap[stId] = { inWip: 0, outWip: roundOutMap[stId] || 0 };
+    } else {
+      wipMap[stId].outWip = roundOutMap[stId] || 0;
+    }
   });
 
   let code = "graph LR\n";
@@ -1179,12 +1321,12 @@ async function renderFlowDiagram(group) {
     let feederKit = 0;
     const hasCfgSub = (!isRoot && rawCfg.subInit !== undefined && rawCfg.subInit !== null);
     const cfgSub = hasCfgSub ? Math.max(0, parseInt(rawCfg.subInit, 10) || 0) : 0;
-    const manualAdded = (!isRoot && w.outWip === 0 && hasCfgSub)
+    const manualAdded = (!viewRound.isLive)
       ? cfgSub
-      : Math.max(w.inWip || 0, cfgSub);
+      : ((!isRoot && w.outWip === 0 && hasCfgSub) ? cfgSub : Math.max(w.inWip || 0, cfgSub));
 
-    // 若尚未開工且雲端 input_wip 與設定值不同，自動背景同步至雲端資料庫
-    if (!isRoot && w.outWip === 0 && hasCfgSub && (w.inWip || 0) !== cfgSub) {
+    // 若為目前進行中場次、尚未開工且雲端 input_wip 與設定值不同，自動背景同步至雲端資料庫
+    if (viewRound.isLive && !isRoot && w.outWip === 0 && hasCfgSub && (w.inWip || 0) !== cfgSub) {
       fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stId)}`, {
         method: "PATCH",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
@@ -1210,9 +1352,10 @@ async function renderFlowDiagram(group) {
       feederKit = minAvail === 999999 ? 0 : minAvail;
       totalSub = feederKit + remainingManualBuffer;
       if (hasRaw && rawName) {
-        rawStock = (wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined)
-          ? wipMap[stId + '_RAW'].inWip
-          : (rawCfg.rawInit ?? 10);
+        const initRawVal = (rawCfg.rawInit !== undefined && rawCfg.rawInit !== "") ? (parseInt(rawCfg.rawInit, 10) || 0) : 10;
+        rawStock = viewRound.isLive
+          ? ((wipMap[stId + '_RAW'] && wipMap[stId + '_RAW'].inWip !== undefined) ? wipMap[stId + '_RAW'].inWip : initRawVal)
+          : Math.max(0, initRawVal - w.outWip);
         inQty = Math.min(totalSub, rawStock);
       } else {
         inQty = totalSub;
@@ -1790,24 +1933,13 @@ async function deleteRecord(id) {
   loadAll();
 }
 
-// 統計分析
+// 統計分析（嚴格依目前檢視場次 getEffectiveViewRound() 獨立計算，確保第 1 次與第 2 次測試成績互不影響）
 function showStats(data) {
   const tbody = document.querySelector("#statTable tbody");
   tbody.innerHTML = "";
 
-  let completed = data.filter(r => r.status === "COMPLETED");
-  if (currentTableFilter === "OFFICIAL") {
-    completed = completed.filter(r => !isTestProductId(r.product_id));
-  } else if (currentTableFilter === "TEST") {
-    completed = completed.filter(r => {
-      if (!isTestProductId(r.product_id)) return false;
-      if (currentTestRoundFilter !== "ALL_TEST") {
-        return getTestRoundFromProductId(r.product_id) === parseInt(currentTestRoundFilter, 10);
-      }
-      return true;
-    });
-  }
-  const rows = completed;
+  const viewRound = getEffectiveViewRound();
+  const rows = data.filter(r => isEventInViewRound(r, viewRound));
 
   // 1. 取得整條產線最早開工時間 (基準起跑時間)
   const allStartTimes = rows.map(r => new Date(r.start_time).getTime()).filter(t => !isNaN(t));
@@ -1900,7 +2032,7 @@ function showStats(data) {
 
   if (rows.length === 0) {
     if (taktBanner) taktBanner.style.display = "block";
-    const activeLabel = (currentSystemMode === 1) ? "🏆 正式實作" : `🧪 第 ${currentTestRound} 次測試`;
+    const activeLabel = viewRound.label;
     const elRoundTag = document.getElementById("taktRoundTag");
     const elOutCount = document.getElementById("taktOutputCountText");
     const elOutSub = document.getElementById("taktOutputSubText");
@@ -1910,7 +2042,7 @@ function showStats(data) {
     const elTaktFormula = document.getElementById("taktFormulaDetailText");
     const elVsBottle = document.getElementById("taktVsBottleneckText");
     const elSteady = document.getElementById("taktSteadyIntervalText");
-    if (elRoundTag) elRoundTag.textContent = `目前場次：${activeLabel}（待命中）`;
+    if (elRoundTag) elRoundTag.textContent = `檢視場次：${activeLabel}（尚無完工紀錄）`;
     if (elOutCount) elOutCount.textContent = `0 組`;
     if (elOutSub) elOutSub.textContent = `等待終點工站產出成品`;
     if (elTotalTime) elTotalTime.textContent = `0.0 秒`;
@@ -1921,38 +2053,8 @@ function showStats(data) {
     if (elSteady) elSteady.textContent = `💡 開始掃碼生產後將即時自動換算`;
   } else {
     if (taktBanner) taktBanner.style.display = "block";
-
-    // 若目前篩選為「全部」，自動鎖定單一場次計算（優先取目前系統設定場次，否則取最新有紀錄之場次），避免跨場次休息時間混入總耗時
-    let runRows = rows;
-    if (currentTableFilter === "OFFICIAL") {
-      activityRoundLabel = "🏆 正式實作";
-    } else if (currentTableFilter === "TEST" && currentTestRoundFilter !== "ALL_TEST") {
-      activityRoundLabel = `🧪 第 ${currentTestRoundFilter} 次測試`;
-    } else {
-      // 自動挑出單一活動場次
-      const targetIsOfficial = (currentSystemMode === 1);
-      const targetRound = currentTestRound;
-      const matchActive = rows.filter(r => {
-        const isT = isTestProductId(r.product_id);
-        if (targetIsOfficial) return !isT;
-        return isT && getTestRoundFromProductId(r.product_id) === targetRound;
-      });
-      if (matchActive.length > 0) {
-        runRows = matchActive;
-        activityRoundLabel = targetIsOfficial ? "🏆 正式實作" : `🧪 第 ${targetRound} 次測試`;
-      } else {
-        // 取最新一筆紀錄所屬的場次
-        const latestEv = rows[rows.length - 1];
-        const latestIsT = isTestProductId(latestEv.product_id);
-        const latestR = getTestRoundFromProductId(latestEv.product_id) || 1;
-        runRows = rows.filter(r => {
-          const isT = isTestProductId(r.product_id);
-          if (!latestIsT) return !isT;
-          return isT && (getTestRoundFromProductId(r.product_id) || 1) === latestR;
-        });
-        activityRoundLabel = !latestIsT ? "🏆 正式實作" : `🧪 第 ${latestR} 次測試`;
-      }
-    }
+    const runRows = rows;
+    activityRoundLabel = viewRound.label;
 
     // 找出該組流程的終點工站 (Final Station)
     let groupFlows = (window.cachedGroupFlows && window.cachedGroupFlows[curGroup]) || [];

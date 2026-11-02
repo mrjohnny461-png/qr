@@ -2259,9 +2259,14 @@ async function syncHistoryFromDb() {
       return getTestRoundFromProductId(e.product_id) === currentTestRound;
     });
 
-    // 🛡️ 關鍵修正：絕不讓歷史篩選將已完工之 station_wip.output_wip 誤歸零，確保與工蓋螢幕的齊套計算 100% 一致！
-    if (modeEvents.length > currentOutWip) {
+    // 🛡️ 以當前場次 (第 1~10 次測試或正式實作) 的真實完工筆數作為 currentOutWip，確保切換場次時各場次數據獨立且與工蓋螢幕 100% 同步
+    if (currentOutWip !== modeEvents.length) {
       currentOutWip = modeEvents.length;
+      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(stationId)}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ output_wip: currentOutWip, updated_at: new Date().toISOString() })
+      }).catch(() => {});
     }
     document.getElementById("wipOutText").textContent = currentOutWip;
     document.getElementById("cycleTotalBadge").textContent = `${isTestMode ? `🧪 第 ${currentTestRound} 次測試完成` : "🏆 正式完成"}：${currentOutWip} 件`;

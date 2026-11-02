@@ -150,7 +150,7 @@
         <!-- 🧪 測試組數 (第 1~10 次) 選單與確認按鈕 (僅管理員可調整) -->
         <span id="testRoundBox" style="display:inline-flex; align-items:center; gap:4px; background:#f3e8ff; padding:2px 8px; border-radius:6px; border:1px solid #d8b4fe;">
           <span style="font-size:12px; color:#6b21a8; font-weight:bold;">測試組數:</span>
-          <select id="testRoundSelect" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
+          <select id="testRoundSelect" onchange="onTestRoundSelectChange(this.value)" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#6b21a8; border-radius:4px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
             <option value="1">第 1 次測試</option>
             <option value="2">第 2 次測試</option>
             <option value="3">第 3 次測試</option>
@@ -533,6 +533,9 @@ document.getElementById("refreshIntervalSelect").onchange = function() {
 // 🎯 實作輪次控制 (0: 測試練習 [支援第 1~10 次測試], 1: 正式實作) 與 掃描防呆/完工冷卻秒數
 let currentSystemMode = 0; // 0=TEST, 1=OFFICIAL
 let currentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1; // 1~10 次測試
+let pendingSelectedTestRound = null; // 暫存使用者於下拉選單剛選擇但尚未按確認的值，防止每 3 秒自動重整將選單跳回第 1 次
+let isSwitchingModeOrRound = false;  // 切換確認進行中鎖定旗標
+let lastLocalModeChangeAt = 0;       // 最近一次本地確認切換時間戳，防止非同步重整舊值覆蓋
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工防呆 1~5 秒
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 完工冷卻/起始間隔 1~5 秒 (預設 4 秒，即 3~5 秒)
 let currentTableFilter = "ALL"; // ALL, OFFICIAL, TEST
@@ -576,6 +579,13 @@ function getTestRoundFromProductId(pid) {
   return null;
 }
 
+function onTestRoundSelectChange(val) {
+  const parsed = parseInt(val, 10);
+  if (!isNaN(parsed) && parsed >= 1 && parsed <= 10) {
+    pendingSelectedTestRound = parsed;
+  }
+}
+
 function updateModeButtonsUI() {
   const testBtn = document.getElementById("modeTestBtn");
   const officialBtn = document.getElementById("modeOfficialBtn");
@@ -588,7 +598,9 @@ function updateModeButtonsUI() {
   if (cdSelect) cdSelect.value = currentCooldownSec;
   if (fcdSelect) fcdSelect.value = currentFinishCooldownSec;
   if (roundSelect && document.activeElement !== roundSelect) {
-    roundSelect.value = currentTestRound;
+    // 若使用者剛在選單選了第 N 次測試準備按確認，保留使用者選中的值，絕不跳回第 1 次
+    const displayRound = (pendingSelectedTestRound !== null) ? pendingSelectedTestRound : currentTestRound;
+    roundSelect.value = String(displayRound);
   }
 
   if (currentSystemMode === 1) {
@@ -645,7 +657,7 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal)
       await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
         method: "PATCH",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
+        body: JSON.stringify({ group_id: "SYSTEM", input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
       });
     } else {
       await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
@@ -657,11 +669,11 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal)
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (回到初始設定備料 subInit / rawInit，保留歷史 event 數據)
+// 重置指定組別的 station_wip 在製品庫存 (回到初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE)
 async function resetGroupWipForNewRound(group) {
   if (!group || group === "ALL") return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=neq.SYSTEM_MODE`, {
       method: "PATCH",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
@@ -700,36 +712,54 @@ async function confirmTestRound() {
   resetAutoLock();
 
   const roundSelect = document.getElementById("testRoundSelect");
-  const selectedRound = Math.min(10, Math.max(1, parseInt(roundSelect ? roundSelect.value : "1", 10) || 1));
+  const rawVal = (pendingSelectedTestRound !== null)
+    ? pendingSelectedTestRound
+    : (roundSelect ? parseInt(roundSelect.value, 10) : currentTestRound);
+  const selectedRound = Math.min(10, Math.max(1, rawVal || 1));
+  if (roundSelect) roundSelect.value = String(selectedRound);
   const group = document.getElementById("groupSelect").value;
 
-  const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，各工站手機與 QR Code 頁面將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」。\n• 本組在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
-  if (!ok) {
-    if (roundSelect) roundSelect.value = currentTestRound;
-    return;
+  isSwitchingModeOrRound = true;
+  try {
+    const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，各工站手機與 QR Code 頁面將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」。\n• 本組在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
+    if (!ok) {
+      pendingSelectedTestRound = null;
+      if (roundSelect) roundSelect.value = String(currentTestRound);
+      return;
+    }
+
+    currentSystemMode = 0;
+    currentTestRound = selectedRound;
+    pendingSelectedTestRound = null;
+    lastLocalModeChangeAt = Date.now();
+    localStorage.setItem("ie_chair_system_mode", "0");
+    localStorage.setItem("ie_chair_test_round", String(selectedRound));
+    if (roundSelect) roundSelect.value = String(selectedRound);
+    updateModeButtonsUI();
+
+    // 1. 先立即寫入雲端 SYSTEM_MODE，確保 selectedRound 不會被背景輪詢覆蓋
+    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec);
+
+    // 2. 重置該組別的工站在製品庫存（排除 SYSTEM_MODE）
+    if (group !== "ALL") {
+      await resetGroupWipForNewRound(group);
+    }
+
+    // 3. 再次確保雲端 SYSTEM_MODE 鎖定為 selectedRound
+    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec);
+    lastLocalModeChangeAt = Date.now();
+
+    // 自動將下方表格篩選與流程圖檢視切至該次測試，方便即時確認該次測試資料
+    const filterSelect = document.getElementById("filterTestRoundSelect");
+    if (filterSelect) {
+      filterSelect.value = String(selectedRound);
+      setTestRoundTableFilter(String(selectedRound));
+    }
+
+    alert(`✓ 已確認切換為【🧪 第 ${selectedRound} 次測試】！各工站手機與在製品庫存已同步就緒。`);
+  } finally {
+    isSwitchingModeOrRound = false;
   }
-
-  currentSystemMode = 0;
-  currentTestRound = selectedRound;
-  localStorage.setItem("ie_chair_system_mode", "0");
-  localStorage.setItem("ie_chair_test_round", String(selectedRound));
-  updateModeButtonsUI();
-
-  if (group !== "ALL") {
-    await resetGroupWipForNewRound(group);
-  }
-
-  // 同步寫入雲端 SYSTEM_MODE
-  await upsertSystemModeCloud(0, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
-
-  // 自動將下方表格篩選切至該次測試，方便即時確認該次測試資料
-  const filterSelect = document.getElementById("filterTestRoundSelect");
-  if (filterSelect) {
-    filterSelect.value = String(selectedRound);
-    setTestRoundTableFilter(String(selectedRound));
-  }
-
-  alert(`✓ 已確認切換為【🧪 第 ${selectedRound} 次測試】！各工站手機與在製品庫存已同步就緒。`);
   loadAll();
 }
 
@@ -741,27 +771,36 @@ async function changeSystemMode(newMode) {
   resetAutoLock();
 
   const group = document.getElementById("groupSelect").value;
-  if (newMode === 1) {
-    const ok = confirm("⚠️ 即將切換至【🏆 正式實作評分模式】！\n\n現場各工站手機將同步切入正式計分實作。\n建議點擊「確定」自動將當前在製品庫存歸零並恢復初始備料起跑（測試數據將完整保留，不受影響）；點擊「取消」保留目前在庫。");
-    if (ok && group !== "ALL") {
-      await resetGroupWipForNewRound(group);
+  isSwitchingModeOrRound = true;
+  try {
+    if (newMode === 1) {
+      const ok = confirm("⚠️ 即將切換至【🏆 正式實作評分模式】！\n\n現場各工站手機將同步切入正式計分實作。\n建議點擊「確定」自動將當前在製品庫存歸零並恢復初始備料起跑（測試數據將完整保留，不受影響）；點擊「取消」保留目前在庫。");
+      if (ok && group !== "ALL") {
+        await resetGroupWipForNewRound(group);
+      }
+    } else {
+      const roundSelect = document.getElementById("testRoundSelect");
+      const rawVal = (pendingSelectedTestRound !== null)
+        ? pendingSelectedTestRound
+        : (roundSelect ? parseInt(roundSelect.value, 10) : currentTestRound);
+      currentTestRound = Math.min(10, Math.max(1, rawVal || currentTestRound));
+      pendingSelectedTestRound = null;
     }
-  } else {
-    const roundSelect = document.getElementById("testRoundSelect");
-    if (roundSelect) {
-      currentTestRound = Math.min(10, Math.max(1, parseInt(roundSelect.value, 10) || currentTestRound));
-    }
+
+    currentSystemMode = newMode;
+    lastLocalModeChangeAt = Date.now();
+    localStorage.setItem("ie_chair_system_mode", newMode);
+    localStorage.setItem("ie_chair_test_round", String(currentTestRound));
+    updateModeButtonsUI();
+
+    // 同步更新雲端 station_wip SYSTEM_MODE
+    await upsertSystemModeCloud(newMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
+    lastLocalModeChangeAt = Date.now();
+
+    alert(`✓ 已成功切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : `🧪 測試練習 (第 ${currentTestRound} 次測試)`}】！現場手機端已同步。`);
+  } finally {
+    isSwitchingModeOrRound = false;
   }
-
-  currentSystemMode = newMode;
-  localStorage.setItem("ie_chair_system_mode", newMode);
-  localStorage.setItem("ie_chair_test_round", String(currentTestRound));
-  updateModeButtonsUI();
-
-  // 同步更新雲端 station_wip SYSTEM_MODE
-  await upsertSystemModeCloud(newMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
-
-  alert(`✓ 已成功切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : `🧪 測試練習 (第 ${currentTestRound} 次測試)`}】！現場手機端已同步。`);
   loadAll();
 }
 
@@ -1097,7 +1136,7 @@ document.getElementById("deleteAllBtn").onclick = async () => {
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
       });
 
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}`, {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=neq.SYSTEM_MODE`, {
         method: "PATCH",
         headers: {
           apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
@@ -1106,6 +1145,9 @@ document.getElementById("deleteAllBtn").onclick = async () => {
         body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
       });
     }
+
+    // 確保清空重置不會把 SYSTEM_MODE 的測試次數洗掉
+    await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 
     // 重置後若該組工站有設定初始半成品備料 (subInit) 或專屬零件 (rawInit)，自動同步寫入雲端
     try {
@@ -1162,17 +1204,21 @@ async function loadAll() {
     });
 
     try {
-      const modeRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      });
-      const modeRows = await modeRes.json();
-      if (modeRows && modeRows.length > 0) {
-        const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
-        currentSystemMode = decodedMode.mode;
-        currentTestRound = decodedMode.round;
-        const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
-        currentCooldownSec = decodedCd.startCd;
-        currentFinishCooldownSec = decodedCd.finishCd;
+      if (!isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
+        const modeRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        const modeRows = await modeRes.json();
+        if (modeRows && modeRows.length > 0 && !isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
+          const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
+          currentSystemMode = decodedMode.mode;
+          currentTestRound = decodedMode.round;
+          const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
+          currentCooldownSec = decodedCd.startCd;
+          currentFinishCooldownSec = decodedCd.finishCd;
+          updateModeButtonsUI();
+        }
+      } else {
         updateModeButtonsUI();
       }
     } catch(e) {}

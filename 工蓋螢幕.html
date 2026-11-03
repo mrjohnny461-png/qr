@@ -1397,13 +1397,15 @@ async function loadAll() {
     updateFlowViewRoundUI();
 
     if (group !== "ALL") {
+      const viewRound = getEffectiveViewRound();
+      const roundParam = viewRound.mode === "OFFICIAL" ? "OFFICIAL" : String(viewRound.round || currentTestRound);
       document.getElementById("flowCard").style.display = "block";
       const flowGrpBadge = document.getElementById("flowGroupTitleBadge");
       if (flowGrpBadge) flowGrpBadge.textContent = `【${group}】`;
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) {
-        gotoBtn.href = `qrcode.html?group=${encodeURIComponent(group)}`;
-        gotoBtn.innerHTML = `🖨️ 前往【${group}】QR Code 桌牌與料號設定 ❯`;
+        gotoBtn.href = `qrcode.html?group=${encodeURIComponent(group)}&round=${encodeURIComponent(roundParam)}`;
+        gotoBtn.innerHTML = `🖨️ 前往【${group} - ${viewRound.label}】QR Code 桌牌與料號設定 ❯`;
         gotoBtn.style.display = "inline-flex";
       }
       await renderFlowDiagram(group);
@@ -1443,6 +1445,12 @@ async function renderFlowDiagram(group) {
   if (Array.isArray(flows) && flows.length > 0) {
     window.cachedGroupFlows[flowKey] = flows;
     window.cachedGroupFlows[group] = flows;
+    try {
+      localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(flows));
+      if (viewRound.isLive) {
+        localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(flows));
+      }
+    } catch (e) {}
   }
 
   if (!Array.isArray(flows) || flows.length === 0) {

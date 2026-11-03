@@ -93,16 +93,33 @@
       </a>
     </div>
 
-    <!-- 🎯 目前全線實作模式與第幾次測試註記橫幅 (與主監控看板管理員設定即時同步) -->
+    <!-- 🎯 目前全線實作模式與第幾次測試註記橫幅 (與主監控看板管理員設定即時同步，並支援切換檢視各次測試獨立流程) -->
     <div id="qrSystemModeBanner" style="margin-bottom:16px; padding:12px 16px; border-radius:10px; background:#faf5ff; border:2px solid #d8b4fe; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <span style="font-size:14px; font-weight:bold; color:#475569;">🎯 目前全線實作模式：</span>
         <span id="qrModeBadgeText" style="font-size:15px; font-weight:800; color:#7e22ce; background:#f3e8ff; padding:4px 12px; border-radius:8px; border:1px solid #c084fc;">
           🧪 第 1 次測試 (Table 產品編號：TEST1-P01、TEST1-P02...)
         </span>
+        <div style="display:inline-flex; align-items:center; gap:4px; background:#fff; border:1px solid #c084fc; padding:3px 8px; border-radius:8px;">
+          <span style="font-size:12px; font-weight:bold; color:#6b21a8;">👁️ 檢視流程場次：</span>
+          <select id="qrViewRoundSelect" style="width:auto; padding:2px 6px; font-size:12px; font-weight:bold; border-radius:6px; border:1px solid #d8b4fe; color:#6b21a8; background:#faf5ff; cursor:pointer;">
+            <option value="AUTO">🎯 自動跟隨目前場次</option>
+            <option value="OFFICIAL">🏆 正式實作 (評分)</option>
+            <option value="1">🧪 第 1 次測試</option>
+            <option value="2">🧪 第 2 次測試</option>
+            <option value="3">🧪 第 3 次測試</option>
+            <option value="4">🧪 第 4 次測試</option>
+            <option value="5">🧪 第 5 次測試</option>
+            <option value="6">🧪 第 6 次測試</option>
+            <option value="7">🧪 第 7 次測試</option>
+            <option value="8">🧪 第 8 次測試</option>
+            <option value="9">🧪 第 9 次測試</option>
+            <option value="10">🧪 第 10 次測試</option>
+          </select>
+        </div>
       </div>
       <span style="font-size:12px; color:#64748b; font-weight:600;">
-        🔒 測試次數僅限【管理員】於主監控看板調整（桌牌 QR Code 固定通用，切換次數無須重印）
+        💡 各次測試可擁有不同流程圖與上線工站數（同工站代號之紙本 QR Code 桌牌固定通用，無須重印）
       </span>
     </div>
 
@@ -231,10 +248,12 @@
   const lockBtn = document.getElementById("lockPartBtn");
   const lockBadge = document.getElementById("lockStatusBadge");
   const lockHint = document.getElementById("lockHintText");
+  const qrViewRoundSelect = document.getElementById("qrViewRoundSelect");
 
-  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02)，其次讀取上次儲存之組別
+  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02&round=3)，其次讀取上次儲存之組別
   const urlParams = new URLSearchParams(window.location.search);
   const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
+  const paramRound = (urlParams.get("round") || "").trim().toUpperCase();
   const savedGroup = localStorage.getItem("ie_chair_selected_group");
 
   if (paramGroup && GROUPS.includes(paramGroup)) {
@@ -249,6 +268,52 @@
     qrCurrentSystemMode = "OFFICIAL";
   }
 
+  // 🌟 檢視/設定場次覆寫 ("AUTO" = 跟隨目前實作場次, "OFFICIAL" = 正式實作, "1"~"10" = 第1~10次測試)
+  let qrViewRoundOverride = "AUTO";
+  if (paramRound === "OFFICIAL" || (/^\d+$/.test(paramRound) && parseInt(paramRound, 10) >= 1 && parseInt(paramRound, 10) <= 10)) {
+    qrViewRoundOverride = paramRound;
+    if (qrViewRoundSelect) qrViewRoundSelect.value = paramRound;
+  }
+
+  function getEffectiveQrRound() {
+    if (qrViewRoundOverride === "OFFICIAL") {
+      return {
+        mode: "OFFICIAL",
+        round: qrCurrentTestRound,
+        label: "🏆 正式實作 (評分)",
+        isLive: qrCurrentSystemMode === "OFFICIAL"
+      };
+    }
+    if (qrViewRoundOverride !== "AUTO") {
+      const r = Math.min(10, Math.max(1, parseInt(qrViewRoundOverride, 10) || 1));
+      return {
+        mode: "TEST",
+        round: r,
+        label: `🧪 第 ${r} 次測試`,
+        isLive: qrCurrentSystemMode === "TEST" && qrCurrentTestRound === r
+      };
+    }
+    return {
+      mode: qrCurrentSystemMode,
+      round: qrCurrentTestRound,
+      label: qrCurrentSystemMode === "OFFICIAL" ? "🏆 正式實作 (評分)" : `🧪 第 ${qrCurrentTestRound} 次測試`,
+      isLive: true
+    };
+  }
+
+  function getCurrentQrFlowKey(group) {
+    const eff = getEffectiveQrRound();
+    return eff.mode === "OFFICIAL" ? `${group}-OFFICIAL` : `${group}-T${eff.round}`;
+  }
+
+  if (qrViewRoundSelect) {
+    qrViewRoundSelect.addEventListener("change", async function() {
+      qrViewRoundOverride = this.value || "AUTO";
+      updateQrModeBannerUI();
+      await renderCurrentGroup();
+    });
+  }
+
   function decodeQrSystemModeInput(val) {
     const n = parseInt(val, 10) || 0;
     if (n === 1) return { mode: "OFFICIAL", round: qrCurrentTestRound };
@@ -257,9 +322,10 @@
   }
 
   function getQrModeTagText() {
-    return qrCurrentSystemMode === "OFFICIAL"
+    const eff = getEffectiveQrRound();
+    return eff.mode === "OFFICIAL"
       ? `🏆 正式實作 (評分) ｜ Table 編號: P01、P02...`
-      : `🧪 第 ${qrCurrentTestRound} 次測試 ｜ Table 編號: TEST${qrCurrentTestRound}-P01...`;
+      : `🧪 第 ${eff.round} 次測試 ｜ Table 編號: TEST${eff.round}-P01...`;
   }
 
   function updateQrModeBannerUI() {
@@ -281,23 +347,27 @@
       badge.style.borderColor = "#c084fc";
       badge.innerHTML = `🧪 第 ${qrCurrentTestRound} 次測試 <span style="font-size:12px; font-weight:bold; margin-left:6px;">(Table 產品編號：TEST${qrCurrentTestRound}-P01、TEST${qrCurrentTestRound}-P02...)</span>`;
     }
+    const eff = getEffectiveQrRound();
     const singleModeEl = document.getElementById("qrSingleModeNote");
     if (singleModeEl) {
       singleModeEl.innerHTML = getQrModeTagText();
-      singleModeEl.style.background = qrCurrentSystemMode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
-      singleModeEl.style.color = qrCurrentSystemMode === "OFFICIAL" ? "#15803d" : "#7e22ce";
-      singleModeEl.style.borderColor = qrCurrentSystemMode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
+      singleModeEl.style.background = eff.mode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
+      singleModeEl.style.color = eff.mode === "OFFICIAL" ? "#15803d" : "#7e22ce";
+      singleModeEl.style.borderColor = eff.mode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
     }
     document.querySelectorAll(".qr-card-mode-tag").forEach(el => {
       el.innerHTML = getQrModeTagText();
-      el.style.background = qrCurrentSystemMode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
-      el.style.color = qrCurrentSystemMode === "OFFICIAL" ? "#15803d" : "#7e22ce";
-      el.style.borderColor = qrCurrentSystemMode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
+      el.style.background = eff.mode === "OFFICIAL" ? "#dcfce7" : "#f3e8ff";
+      el.style.color = eff.mode === "OFFICIAL" ? "#15803d" : "#7e22ce";
+      el.style.borderColor = eff.mode === "OFFICIAL" ? "#86efac" : "#d8b4fe";
     });
   }
 
+  let hasCompletedInitialModeSync = false;
   async function syncQrSystemMode() {
     try {
+      const prevMode = qrCurrentSystemMode;
+      const prevRound = qrCurrentTestRound;
       const localMode = localStorage.getItem("ie_chair_system_mode");
       const localRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1;
       if (localMode === "1") {
@@ -317,7 +387,13 @@
           const decoded = decodeQrSystemModeInput(rows[0].input_wip);
           qrCurrentSystemMode = decoded.mode;
           qrCurrentTestRound = decoded.round;
+          localStorage.setItem("ie_chair_system_mode", qrCurrentSystemMode === "OFFICIAL" ? "1" : "0");
+          localStorage.setItem("ie_chair_test_round", String(qrCurrentTestRound));
           updateQrModeBannerUI();
+          if (!hasCompletedInitialModeSync || prevMode !== qrCurrentSystemMode || prevRound !== qrCurrentTestRound) {
+            hasCompletedInitialModeSync = true;
+            await renderCurrentGroup();
+          }
         }
       }
     } catch (e) {}
@@ -405,58 +481,22 @@
       .filter(Boolean);
   }
 
-  // 依據組別與目前場次自訂之流程圖動態同步上線工站 (優先檢查本地快存以達到 0 秒即時同步)
+  // 🌟 依據組別與目前選定場次自訂之流程圖動態同步上線工站 (優先同步雲端該場次最新流程，離線則使用本地備份)
   async function syncActiveStationsFromFlow(group) {
     currentGroupFlows = [];
 
-    const sysMode = localStorage.getItem("ie_chair_system_mode") === "1" ? "OFFICIAL" : "TEST";
-    const sysRound = Math.min(10, Math.max(1, parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1));
-    const curFlowKey = sysMode === "OFFICIAL" ? `${group}-OFFICIAL` : `${group}-T${sysRound}`;
+    const eff = getEffectiveQrRound();
+    const curFlowKey = getCurrentQrFlowKey(group);
 
     const candidateKeys = [curFlowKey];
-    if (sysMode === "TEST" && sysRound > 1) {
-      for (let r = sysRound - 1; r >= 1; r--) candidateKeys.push(`${group}-T${r}`);
+    if (eff.mode === "TEST" && eff.round > 1) {
+      for (let r = eff.round - 1; r >= 1; r--) candidateKeys.push(`${group}-T${r}`);
+    } else if (eff.mode === "OFFICIAL") {
+      for (let r = 10; r >= 1; r--) candidateKeys.push(`${group}-T${r}`);
     }
     if (!candidateKeys.includes(group)) candidateKeys.push(group);
 
-    // 1. 優先讀取本地備份流程 (只要在工蓋螢幕儲存過，就能 0 秒無網路立即可用)
-    for (const k of candidateKeys) {
-      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${k}`);
-      if (backupRaw) {
-        try {
-          const backupFlows = JSON.parse(backupRaw);
-          if (Array.isArray(backupFlows) && backupFlows.length > 0) {
-            currentGroupFlows = backupFlows;
-            const activeSet = new Set();
-            backupFlows.forEach(f => {
-              if (f.station_id) activeSet.add(f.station_id.trim());
-              if (f.next_station_id) activeSet.add(f.next_station_id.trim());
-            });
-            const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
-            if (filtered.length > 0) {
-              STATIONS = filtered;
-              return;
-            }
-          }
-        } catch(e) {}
-      }
-    }
-
-    // 2. 若無備份流程，檢查該組的 station_raw 設定中定義了哪些工站
-    try {
-      const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-      const groupRaw = allRaw[curFlowKey] || allRaw[group];
-      if (groupRaw && typeof groupRaw === "object") {
-        const rawKeys = Object.keys(groupRaw).filter(k => k && !k.endsWith("_RAW"));
-        const filtered = ALL_STATIONS.filter(s => rawKeys.includes(s));
-        if (filtered.length > 0) {
-          STATIONS = filtered;
-          return;
-        }
-      }
-    } catch(e) {}
-
-    // 3. 嘗試從雲端 Supabase 同步 (設置 1.5 秒逾時，防離線卡死)
+    // 1. 優先從雲端 Supabase 同步該場次最新流程圖 (設置 1.5 秒逾時，確保跨分頁或剛改完測試流程時不會讀到舊場次快取)
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
@@ -495,15 +535,55 @@
             });
             if (filtered.length > 0) {
               STATIONS = filtered;
-              localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(flows));
+              localStorage.setItem(`ie_chair_flow_backup_${curFlowKey}`, JSON.stringify(flows));
+              if (eff.isLive) {
+                localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(flows));
+              }
               return;
             }
           }
         }
       }
     } catch(e) {
-      console.warn("雲端同步流程跳過或離線：", e);
+      console.warn("雲端同步流程跳過或離線，改用本地快取：", e);
     }
+
+    // 2. 若離線或雲端無資料，讀取本地備份流程
+    for (const k of candidateKeys) {
+      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${k}`);
+      if (backupRaw) {
+        try {
+          const backupFlows = JSON.parse(backupRaw);
+          if (Array.isArray(backupFlows) && backupFlows.length > 0) {
+            currentGroupFlows = backupFlows;
+            const activeSet = new Set();
+            backupFlows.forEach(f => {
+              if (f.station_id) activeSet.add(f.station_id.trim());
+              if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+            });
+            const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+            if (filtered.length > 0) {
+              STATIONS = filtered;
+              return;
+            }
+          }
+        } catch(e) {}
+      }
+    }
+
+    // 3. 若無備份流程，檢查該組的 station_raw 設定中定義了哪些工站
+    try {
+      const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+      const groupRaw = allRaw[curFlowKey] || allRaw[group];
+      if (groupRaw && typeof groupRaw === "object") {
+        const rawKeys = Object.keys(groupRaw).filter(k => k && !k.endsWith("_RAW"));
+        const filtered = ALL_STATIONS.filter(s => rawKeys.includes(s));
+        if (filtered.length > 0) {
+          STATIONS = filtered;
+          return;
+        }
+      }
+    } catch(e) {}
 
     // 4. 若皆無，預設為全部標準工站
     STATIONS = [...ALL_STATIONS];
@@ -526,26 +606,29 @@
     }
   }
 
-  // 渲染當前選取組別之料號、原生零件設定與動態工站卡片
+  // 渲染當前選取組別與場次之料號、原生零件設定與動態工站卡片
   async function renderCurrentGroup() {
     activeGroup = groupSelect.value || "G02";
+    const eff = getEffectiveQrRound();
+    const curFlowKey = getCurrentQrFlowKey(activeGroup);
+
     await syncActiveStationsFromFlow(activeGroup);
     updateStationDropdown();
 
-    currentGroupLabel.textContent = activeGroup;
+    currentGroupLabel.textContent = `${activeGroup}【${eff.label}】`;
     if (stationCountInfo) {
       stationCountInfo.textContent = `（共 ${STATIONS.length} 組上線工站：${STATIONS.join("、")}）`;
     }
 
     const genAllBtn = document.getElementById("genAllBtn");
     if (genAllBtn) {
-      genAllBtn.textContent = `🖨️ 產生本組全部 ${STATIONS.length} 個工站 (列印桌牌)`;
+      genAllBtn.textContent = `🖨️ 產生本組【${eff.label}】全部 ${STATIONS.length} 個工站 (列印桌牌)`;
     }
 
     const allData = getAllGroupStationParts();
-    const curParts = allData[activeGroup] || {};
+    const curParts = allData[curFlowKey] || allData[activeGroup] || {};
     const allRaw = getAllGroupRawConfigs();
-    const curRaw = allRaw[activeGroup] || {};
+    const curRaw = allRaw[curFlowKey] || allRaw[activeGroup] || {};
     const locks = getGroupLocks();
     const isLocked = !!locks[activeGroup];
 
@@ -556,9 +639,9 @@
     STATIONS.forEach(st => {
       const preds = getStationPredecessors(st);
       const isRoot = (preds.length === 0);
-      const partVal = curParts[st] || "";
+      const partVal = curParts[st] || (allData[activeGroup] && allData[activeGroup][st]) || "";
 
-      const stRaw = curRaw[st] || {};
+      const stRaw = curRaw[st] || (allRaw[activeGroup] && allRaw[activeGroup][st]) || {};
       const subInitVal = (stRaw.subInit !== undefined && stRaw.subInit !== null) ? Math.max(0, parseInt(stRaw.subInit, 10) || 0) : 0;
       const hasRaw = (stRaw.hasRaw === true);
       const rawName = (hasRaw && stRaw.rawName !== undefined && stRaw.rawName !== null) ? String(stRaw.rawName) : "";
@@ -644,14 +727,14 @@
       lockBadge.style.color = "#16a34a";
       lockBtn.textContent = `✏️ 解鎖 ${activeGroup}`;
       lockBtn.style.background = "#64748b";
-      lockHint.textContent = `✓ 【${activeGroup}】料號與物料屬性已鎖定並記憶於此瀏覽器，產生的 QR Code 都會帶入此組設定。`;
+      lockHint.textContent = `✓ 【${activeGroup} - ${eff.label}】料號與物料屬性已鎖定並記憶於此瀏覽器，產生的 QR Code 都會帶入此設定。`;
       lockHint.style.color = "#16a34a";
     } else {
       lockBadge.textContent = `${activeGroup} 🔓 未鎖定`;
       lockBadge.style.color = "#64748b";
       lockBtn.textContent = `🔒 鎖定 ${activeGroup} 設定`;
       lockBtn.style.background = "#2563eb";
-      lockHint.textContent = `💡 提示：輸入【${activeGroup}】各工站料號與原生零件後點擊鎖定，系統將為此組永久儲存。`;
+      lockHint.textContent = `💡 提示：輸入【${activeGroup} - ${eff.label}】各工站料號與原生零件後點擊鎖定，系統將為此組永久儲存。`;
       lockHint.style.color = "#64748b";
     }
 
@@ -679,7 +762,8 @@
   // 蒐集當前畫面上輸入的各站料號 (依上線工站蒐集並合併保存)
   function collectCurrentParts() {
     const allData = getAllGroupStationParts();
-    const parts = allData[activeGroup] || {};
+    const curFlowKey = getCurrentQrFlowKey(activeGroup);
+    const parts = { ...(allData[activeGroup] || {}), ...(allData[curFlowKey] || {}) };
     STATIONS.forEach(st => {
       const input = document.querySelector(`.station-part-input[data-station="${st}"]`);
       if (input && input.value.trim()) {
@@ -689,10 +773,9 @@
     return parts;
   }
 
-  // 蒐集當前畫面上輸入的各站物料設定 (包含 subInit 與專屬原生零件)
+  // 蒐集當前畫面上輸入的各站物料設定 (包含 subInit 與專屬原生零件，僅針對該場次實際上線之 STATIONS)
   function collectCurrentRawConfigs() {
-    const allRaw = getAllGroupRawConfigs();
-    const configs = allRaw[activeGroup] || {};
+    const configs = {};
     STATIONS.forEach(st => {
       const preds = getStationPredecessors(st);
       const isRoot = preds.length === 0;
@@ -717,17 +800,30 @@
     return configs;
   }
 
+  function saveCurrentGroupAndRoundConfigs(group) {
+    const eff = getEffectiveQrRound();
+    const curFlowKey = getCurrentQrFlowKey(group);
+    const parts = collectCurrentParts();
+    const rawConfigs = collectCurrentRawConfigs();
+
+    const allData = getAllGroupStationParts();
+    allData[group] = parts;
+    allData[curFlowKey] = parts;
+    saveAllGroupStationParts(allData);
+
+    const allRaw = getAllGroupRawConfigs();
+    allRaw[curFlowKey] = rawConfigs;
+    if (eff.isLive) {
+      allRaw[group] = rawConfigs;
+    }
+    saveAllGroupRawConfigs(allRaw);
+  }
+
   groupSelect.addEventListener("change", async function(e) {
     const oldGroup = activeGroup;
     const locks = getGroupLocks();
     if (!locks[oldGroup]) {
-      const allData = getAllGroupStationParts();
-      allData[oldGroup] = collectCurrentParts();
-      saveAllGroupStationParts(allData);
-
-      const allRaw = getAllGroupRawConfigs();
-      allRaw[oldGroup] = collectCurrentRawConfigs();
-      saveAllGroupRawConfigs(allRaw);
+      saveCurrentGroupAndRoundConfigs(oldGroup);
     }
     localStorage.setItem("ie_chair_selected_group", groupSelect.value);
     await renderCurrentGroup();
@@ -747,13 +843,7 @@
         await renderCurrentGroup();
       }
     } else {
-      const allData = getAllGroupStationParts();
-      allData[activeGroup] = collectCurrentParts();
-      saveAllGroupStationParts(allData);
-
-      const allRaw = getAllGroupRawConfigs();
-      allRaw[activeGroup] = collectCurrentRawConfigs();
-      saveAllGroupRawConfigs(allRaw);
+      saveCurrentGroupAndRoundConfigs(activeGroup);
 
       locks[activeGroup] = true;
       saveGroupLocks(locks);
@@ -763,19 +853,25 @@
 
   // 快速複製當前組別設定到所有其他組別
   document.getElementById("copyToAllGroupsBtn").addEventListener("click", async () => {
+    const eff = getEffectiveQrRound();
     const curParts = collectCurrentParts();
     const curRaw = collectCurrentRawConfigs();
 
-    if (confirm(`確定要將【${activeGroup}】的各站料號與原生零件設定複製給其他所有組別 (G01~G12) 嗎？\n\n這會將其他組別覆蓋為相同設定，後續仍可隨時個別調整。`)) {
+    if (confirm(`確定要將【${activeGroup} - ${eff.label}】的各站料號與原生零件設定複製給其他所有組別 (G01~G12) 嗎？\n\n這會將其他組別覆蓋為相同設定，後續仍可隨時個別調整。`)) {
       const allData = getAllGroupStationParts();
       const allRaw = getAllGroupRawConfigs();
       GROUPS.forEach(g => {
+        const gFlowKey = getCurrentQrFlowKey(g);
         allData[g] = { ...curParts };
-        allRaw[g] = JSON.parse(JSON.stringify(curRaw));
+        allData[gFlowKey] = { ...curParts };
+        allRaw[gFlowKey] = JSON.parse(JSON.stringify(curRaw));
+        if (eff.isLive) {
+          allRaw[g] = JSON.parse(JSON.stringify(curRaw));
+        }
       });
       saveAllGroupStationParts(allData);
       saveAllGroupRawConfigs(allRaw);
-      alert(`✓ 已成功將【${activeGroup}】的料號與物料設定複製套用至 G01~G12 全部組別！`);
+      alert(`✓ 已成功將【${activeGroup} - ${eff.label}】的料號與物料設定複製套用至 G01~G12 全部組別！`);
       await renderCurrentGroup();
     }
   });
@@ -784,21 +880,22 @@
   document.getElementById("genSingleBtn").addEventListener("click", async function() {
     const group = groupSelect.value;
     const station = stationSelect.value;
+    const eff = getEffectiveQrRound();
+    const curFlowKey = getCurrentQrFlowKey(group);
 
-    const allData = getAllGroupStationParts();
-    const allRaw = getAllGroupRawConfigs();
     const locks = getGroupLocks();
     if (!locks[group]) {
-      allData[group] = collectCurrentParts();
-      saveAllGroupStationParts(allData);
-      allRaw[group] = collectCurrentRawConfigs();
-      saveAllGroupRawConfigs(allRaw);
+      saveCurrentGroupAndRoundConfigs(group);
       locks[group] = true;
       saveGroupLocks(locks);
       await renderCurrentGroup();
     }
-    const partNo = (allData[group] && allData[group][station]) || "";
-    const rawCfg = (allRaw[group] && allRaw[group][station]) || {};
+    const allData = getAllGroupStationParts();
+    const allRaw = getAllGroupRawConfigs();
+    const groupParts = allData[curFlowKey] || allData[group] || {};
+    const groupRaw = allRaw[curFlowKey] || allRaw[group] || {};
+    const partNo = groupParts[station] || "";
+    const rawCfg = groupRaw[station] || {};
     const preds = getStationPredecessors(station);
     const isRoot = preds.length === 0;
 
@@ -830,7 +927,7 @@
     document.getElementById("batchPrintArea").style.display = "none";
     document.getElementById("singleResult").style.display = "block";
 
-    const modeBadgeStyle = qrCurrentSystemMode === "OFFICIAL"
+    const modeBadgeStyle = eff.mode === "OFFICIAL"
       ? "background:#dcfce7; color:#15803d; border:1px solid #86efac;"
       : "background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe;";
     const modeNoteHtml = `<div style="margin-top:8px;"><span id="qrSingleModeNote" style="display:inline-block; font-size:13px; font-weight:bold; padding:4px 10px; border-radius:6px; ${modeBadgeStyle}">${getQrModeTagText()}</span></div>`;
@@ -860,24 +957,23 @@
     link.click();
   };
 
-  // 2. 產生本組全部上線工站桌牌 (動態依流程圖工站數產生)
+  // 2. 產生本組全部上線工站桌牌 (動態依該場次流程圖工站數產生)
   document.getElementById("genAllBtn").addEventListener("click", async function() {
     const group = groupSelect.value;
-    const allData = getAllGroupStationParts();
-    const allRaw = getAllGroupRawConfigs();
+    const eff = getEffectiveQrRound();
+    const curFlowKey = getCurrentQrFlowKey(group);
     const locks = getGroupLocks();
     if (!locks[group]) {
-      allData[group] = collectCurrentParts();
-      saveAllGroupStationParts(allData);
-      allRaw[group] = collectCurrentRawConfigs();
-      saveAllGroupRawConfigs(allRaw);
+      saveCurrentGroupAndRoundConfigs(group);
       locks[group] = true;
       saveGroupLocks(locks);
       await renderCurrentGroup();
     }
 
-    const groupParts = allData[group] || {};
-    const groupRaw = allRaw[group] || {};
+    const allData = getAllGroupStationParts();
+    const allRaw = getAllGroupRawConfigs();
+    const groupParts = allData[curFlowKey] || allData[group] || {};
+    const groupRaw = allRaw[curFlowKey] || allRaw[group] || {};
 
     document.getElementById("singleResult").style.display = "none";
     const batchArea = document.getElementById("batchPrintArea");
@@ -885,7 +981,7 @@
     batchArea.style.display = "block";
     grid.innerHTML = "";
 
-    document.getElementById("batchTitle").innerHTML = `🪑 ${group} - 全線 ${STATIONS.length} 個上線工站個別料號 QR Code 桌牌`;
+    document.getElementById("batchTitle").innerHTML = `🪑 ${group}【${eff.label}】- 全線 ${STATIONS.length} 個上線工站個別料號 QR Code 桌牌`;
 
     STATIONS.forEach(st => {
       const partNo = groupParts[st] || "";
@@ -918,7 +1014,7 @@
 
       const url = `${FIXED_BASE_URL}?${params.toString()}`;
 
-      const modeStyle = qrCurrentSystemMode === "OFFICIAL"
+      const modeStyle = eff.mode === "OFFICIAL"
         ? "background:#dcfce7; color:#15803d; border:1px solid #86efac;"
         : "background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe;";
 
@@ -946,20 +1042,23 @@
 
   window.addEventListener("storage", async function(e) {
     if (e.key === "ie_chair_system_mode" || e.key === "ie_chair_test_round") {
-      syncQrSystemMode();
+      await syncQrSystemMode();
+      await renderCurrentGroup();
     }
     if (e.key === "ie_chair_group_station_raw" || e.key === "ie_chair_group_station_parts" || e.key === "ie_chair_selected_group" || (e.key && e.key.startsWith("ie_chair_flow_backup_"))) {
       await renderCurrentGroup();
     }
   });
   window.addEventListener("focus", async function() {
-    syncQrSystemMode();
+    await syncQrSystemMode();
     await renderCurrentGroup();
   });
 
-  syncQrSystemMode();
-  setInterval(syncQrSystemMode, 3000);
-  renderCurrentGroup();
+  (async function initQrPage() {
+    await syncQrSystemMode();
+    await renderCurrentGroup();
+    setInterval(syncQrSystemMode, 3000);
+  })();
 </script>
 </body>
 </html>

@@ -405,35 +405,47 @@
       .filter(Boolean);
   }
 
-  // 依據組別自訂之流程圖動態同步上線工站 (優先檢查本地快存以達到 0 秒即時同步)
+  // 依據組別與目前場次自訂之流程圖動態同步上線工站 (優先檢查本地快存以達到 0 秒即時同步)
   async function syncActiveStationsFromFlow(group) {
     currentGroupFlows = [];
 
+    const sysMode = localStorage.getItem("ie_chair_system_mode") === "1" ? "OFFICIAL" : "TEST";
+    const sysRound = Math.min(10, Math.max(1, parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1));
+    const curFlowKey = sysMode === "OFFICIAL" ? `${group}-OFFICIAL` : `${group}-T${sysRound}`;
+
+    const candidateKeys = [curFlowKey];
+    if (sysMode === "TEST" && sysRound > 1) {
+      for (let r = sysRound - 1; r >= 1; r--) candidateKeys.push(`${group}-T${r}`);
+    }
+    if (!candidateKeys.includes(group)) candidateKeys.push(group);
+
     // 1. 優先讀取本地備份流程 (只要在工蓋螢幕儲存過，就能 0 秒無網路立即可用)
-    const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
-    if (backupRaw) {
-      try {
-        const backupFlows = JSON.parse(backupRaw);
-        if (Array.isArray(backupFlows) && backupFlows.length > 0) {
-          currentGroupFlows = backupFlows;
-          const activeSet = new Set();
-          backupFlows.forEach(f => {
-            if (f.station_id) activeSet.add(f.station_id.trim());
-            if (f.next_station_id) activeSet.add(f.next_station_id.trim());
-          });
-          const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
-          if (filtered.length > 0) {
-            STATIONS = filtered;
-            return;
+    for (const k of candidateKeys) {
+      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${k}`);
+      if (backupRaw) {
+        try {
+          const backupFlows = JSON.parse(backupRaw);
+          if (Array.isArray(backupFlows) && backupFlows.length > 0) {
+            currentGroupFlows = backupFlows;
+            const activeSet = new Set();
+            backupFlows.forEach(f => {
+              if (f.station_id) activeSet.add(f.station_id.trim());
+              if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+            });
+            const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+            if (filtered.length > 0) {
+              STATIONS = filtered;
+              return;
+            }
           }
-        }
-      } catch(e) {}
+        } catch(e) {}
+      }
     }
 
     // 2. 若無備份流程，檢查該組的 station_raw 設定中定義了哪些工站
     try {
       const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-      const groupRaw = allRaw[group];
+      const groupRaw = allRaw[curFlowKey] || allRaw[group];
       if (groupRaw && typeof groupRaw === "object") {
         const rawKeys = Object.keys(groupRaw).filter(k => k && !k.endsWith("_RAW"));
         const filtered = ALL_STATIONS.filter(s => rawKeys.includes(s));
@@ -448,28 +460,44 @@
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}&order=station_id.asc`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?or=(group_id.eq.${encodeURIComponent(group)},group_id.like.${encodeURIComponent(group)}-*)&order=station_id.asc`, {
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY },
         signal: controller.signal
       });
       clearTimeout(timeoutId);
       if (res.ok) {
-        const flows = await res.json();
-        if (Array.isArray(flows) && flows.length > 0) {
-          currentGroupFlows = flows;
-          const activeSet = new Set();
-          flows.forEach(f => {
-            if (f.station_id) activeSet.add(f.station_id.trim());
-            if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+        const allFlows = await res.json();
+        if (Array.isArray(allFlows) && allFlows.length > 0) {
+          const byKey = {};
+          allFlows.forEach(f => {
+            const k = (f.group_id || "").trim();
+            if (!k) return;
+            if (!byKey[k]) byKey[k] = [];
+            byKey[k].push(f);
           });
-          const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
-          activeSet.forEach(s => {
-            if (!filtered.includes(s)) filtered.push(s);
-          });
-          if (filtered.length > 0) {
-            STATIONS = filtered;
-            localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(flows));
-            return;
+          let flows = [];
+          for (const k of candidateKeys) {
+            if (byKey[k] && byKey[k].length > 0) {
+              flows = byKey[k];
+              break;
+            }
+          }
+          if (flows.length > 0) {
+            currentGroupFlows = flows;
+            const activeSet = new Set();
+            flows.forEach(f => {
+              if (f.station_id) activeSet.add(f.station_id.trim());
+              if (f.next_station_id) activeSet.add(f.next_station_id.trim());
+            });
+            const filtered = ALL_STATIONS.filter(s => activeSet.has(s));
+            activeSet.forEach(s => {
+              if (!filtered.includes(s)) filtered.push(s);
+            });
+            if (filtered.length > 0) {
+              STATIONS = filtered;
+              localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(flows));
+              return;
+            }
           }
         }
       }

@@ -377,7 +377,13 @@
   <!-- 彈跳視窗：工站自訂編輯器 (流向順序 + 原生零件配置) -->
   <div id="flowModal" class="modal">
     <div class="modal-content" style="max-width: 680px; max-height: 90vh; overflow-y: auto;">
-      <h3 style="margin-top:0;">🛠️ 自訂工站前後流向關係</h3>
+      <div id=" flowModalTitleBox" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+        <h3 id="flowModalTitle" style="margin:0;">🛠️ 自訂工站前後流向關係</h3>
+        <span id="flowModalRoundBadge" style="font-size:12px; font-weight:bold; background:#f3e8ff; color:#6b21a8; border:1px solid #d8b4fe; padding:3px 10px; border-radius:999px;">目前場次專用流程</span>
+      </div>
+      <div style="font-size:12px; color:#64748b; margin-bottom:8px;">
+        💡 每次測試（第 1~10 次）與正式實作皆可擁有<b>獨立的流程圖與初始備料設定</b>，修改本場次流程不會影響其他場次的流程圖與成績。
+      </div>
       <div id="flowRowsContainer" style="max-height:220px; overflow-y:auto; margin: 12px 0;"></div>
       <div style="display:flex; gap:10px;">
         <button onclick="addFlowRow()" class="btn-secondary">+ 新增銜接關係</button>
@@ -453,10 +459,31 @@ function getStationPart(group, station) {
   } catch(e) {}
 })();
 
-// 📦 讀取各組別與各工站之原生零件與前置半成品設定
-function getStationRaw(group, station) {
+// 🧭 取得特定組別與場次之獨立流程圖 Key (例如 G01-T1 ~ G01-T10, G01-OFFICIAL)，不需修改 Supabase 資料表結構即可支援 10 次測試各自擁有獨立流程圖
+function getFlowKeyForRound(group, viewRound) {
+  if (!group || group === "ALL") return group;
+  const vr = viewRound || getEffectiveViewRound();
+  if (vr.mode === "OFFICIAL") return `${group}-OFFICIAL`;
+  const r = Math.min(10, Math.max(1, parseInt(vr.round, 10) || 1));
+  return `${group}-T${r}`;
+}
+
+function getFlowKeyForEvent(row) {
+  if (!row || !row.group_id) return "";
+  const g = row.group_id.trim();
+  if (!isTestProductId(row.product_id)) return `${g}-OFFICIAL`;
+  const r = getTestRoundFromProductId(row.product_id) || 1;
+  return `${g}-T${r}`;
+}
+
+// 📦 讀取各組別、各場次與各工站之原生零件與前置半成品設定 (優先讀取該場次獨立設定，若無則自動繼承組別基準設定)
+function getStationRaw(group, station, viewRound) {
   try {
     const all = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+    const flowKey = getFlowKeyForRound(group, viewRound);
+    if (flowKey && all[flowKey] && all[flowKey][station]) {
+      return all[flowKey][station];
+    }
     if (group && all[group] && all[group][station]) {
       return all[group][station];
     }
@@ -669,8 +696,8 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal)
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (回到初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE)
-async function resetGroupWipForNewRound(group) {
+// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE)
+async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=neq.SYSTEM_MODE`, {
@@ -679,7 +706,8 @@ async function resetGroupWipForNewRound(group) {
       body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
     });
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-    const groupRaw = allRaw[group] || {};
+    const flowKey = getFlowKeyForRound(group, viewRound);
+    const groupRaw = (flowKey && allRaw[flowKey]) ? allRaw[flowKey] : (allRaw[group] || {});
     for (const [stKey, cfg] of Object.entries(groupRaw)) {
       if (!cfg) continue;
       const initSub = (!cfg.isRoot && cfg.subInit !== undefined && cfg.subInit !== null)
@@ -869,6 +897,56 @@ function isEventInViewRound(r, viewRound) {
   return rRound === viewRound.round;
 }
 
+// 判斷任何狀態 (包含 WORKING / COMPLETED) 的紀錄是否屬於指定場次 (供精準單場次刪除使用)
+function isEventInTargetRoundAllStatus(r, viewRound) {
+  if (!r) return false;
+  const isT = isTestProductId(r.product_id);
+  if (viewRound.mode === "OFFICIAL") return !isT;
+  if (!isT) return false;
+  const rRound = getTestRoundFromProductId(r.product_id) || 1;
+  return rRound === viewRound.round;
+}
+
+// 🗑️ 精準刪除「指定組別 + 指定單一場次 (如第 2 次測試)」的 event 紀錄，絕不誤刪其他測試場次與別組數據
+async function deleteGroupRoundEvents(group, viewRound) {
+  if (!group || group === "ALL") return;
+  const vr = viewRound || getEffectiveViewRound();
+
+  // 1. 先從目前記憶體中的紀錄篩出屬於該組、該場次的明確 UUID 並刪除
+  const targetIds = (Array.isArray(currentEvents) ? currentEvents : [])
+    .filter(r => (r.group_id || "").trim() === group && isEventInTargetRoundAllStatus(r, vr))
+    .map(r => r.id)
+    .filter(Boolean);
+
+  if (targetIds.length > 0) {
+    await fetch(`${SUPABASE_URL}/rest/v1/event?id=in.(${targetIds.join(",")})`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+  }
+
+  // 2. 再以 PostgREST 條件向雲端精準刪除該組該場次的紀錄，100% 保留其他場次數據
+  if (vr.mode === "OFFICIAL") {
+    await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}&product_id=not.ilike.TEST*`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+  } else {
+    const rNum = Math.min(10, Math.max(1, parseInt(vr.round, 10) || 1));
+    if (rNum === 1) {
+      await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}&or=(product_id.ilike.TEST1-*,product_id.ilike.TEST-*)`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}&product_id=ilike.TEST${rNum}-*`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+    }
+  }
+}
+
 function updateFlowViewRoundUI() {
   const flowSel = document.getElementById("flowViewRoundSelect");
   const statusTag = document.getElementById("flowViewRoundStatusTag");
@@ -894,6 +972,20 @@ function updateFlowViewRoundUI() {
       statusTag.style.background = "#fef3c7";
       statusTag.style.color = "#b45309";
     }
+  }
+
+  // 動態更新「自訂工站順序」與「清空紀錄」按鈕文字，清楚標示目前作用的單一場次
+  const openFlowBtn = document.getElementById("openFlowEditorBtn");
+  if (openFlowBtn) {
+    openFlowBtn.textContent = `🛠️ 自訂本組【${viewRound.label}】流程圖`;
+  }
+  const editCardBtn = document.getElementById("editFlowInCardBtn");
+  if (editCardBtn) {
+    editCardBtn.textContent = `✏️ 修改【${viewRound.label}】順序圖`;
+  }
+  const delBtn = document.getElementById("deleteAllBtn");
+  if (delBtn) {
+    delBtn.textContent = `🗑️ 清空本組【${viewRound.label}】紀錄與庫存`;
   }
 }
 
@@ -1093,7 +1185,7 @@ function changeAdminPin() {
   alert("✓ 管理員密碼修改成功！新密碼已生效，請妥善保存。");
 }
 
-// 一鍵清空全部數據與重置 WIP (需管理員權限)
+// 🗑️ 單一場次精準清空與重置 WIP (僅刪除該組、該次測試/場次的數據，其他場次數據 100% 保留)
 document.getElementById("deleteAllBtn").onclick = async () => {
   if (!isAdminLoggedIn) {
     alert("⚠️ 權限不足：現場看板模式下禁止執行清空重置操作！請先解鎖管理員。");
@@ -1107,79 +1199,157 @@ document.getElementById("deleteAllBtn").onclick = async () => {
     return;
   }
 
-  const ok = confirm(`⚠️ 警告：確定要清空【${group}】的所有計時紀錄，並將所有工站的站前/站後庫存全部歸零重置嗎？`);
+  const viewRound = getEffectiveViewRound();
+  const ok = confirm(`⚠️ 確定要清空【${group}】在【${viewRound.label}】的所有計時紀錄，並將本組工站庫存歸零重置嗎？\n\n💡 系統保護：本次操作「只會刪除 ${group} 於 ${viewRound.label}」的數據，其他測試場次（如第 1~10 次測試的其他場次）與別組的歷史數據均 100% 完整保留！`);
   if (!ok) return;
 
   try {
-    document.getElementById("status").textContent = "正在清空與重置中...";
+    document.getElementById("status").textContent = `正在清空【${group} - ${viewRound.label}】與重置中...`;
 
-    // 嘗試調用後端安全 RPC (若 Supabase 已建立函數)
-    const pin = getAdminPin();
-    let rpcHandled = false;
-    try {
-      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_reset_group_data`, {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ p_group_id: group, p_admin_pin: pin })
-      });
-      if (rpcRes.ok) {
-        rpcHandled = true;
-      }
-    } catch(e) {}
+    // 1. 精準刪除該組、該場次的 event 紀錄（絕不呼叫會清空全組所有場次的舊 RPC）
+    await deleteGroupRoundEvents(group, viewRound);
 
-    if (!rpcHandled) {
-      await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
-        method: "DELETE",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      });
+    // 2. 重置該組的 station_wip 在製品庫存（回到該場次設定之初始備料，並排除 SYSTEM_MODE）
+    await resetGroupWipForNewRound(group, viewRound);
 
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=neq.SYSTEM_MODE`, {
-        method: "PATCH",
-        headers: {
-          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
-      });
-    }
-
-    // 確保清空重置不會把 SYSTEM_MODE 的測試次數洗掉
+    // 3. 確保清空重置不會把 SYSTEM_MODE 的測試次數洗掉
     await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
 
-    // 重置後若該組工站有設定初始半成品備料 (subInit) 或專屬零件 (rawInit)，自動同步寫入雲端
-    try {
-      const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-      const groupRaw = allRaw[group] || {};
-      for (const [stKey, cfg] of Object.entries(groupRaw)) {
-        if (!cfg) continue;
-        const initSub = (!cfg.isRoot && cfg.subInit !== undefined && cfg.subInit !== null)
-          ? Math.max(0, parseInt(cfg.subInit, 10) || 0)
-          : 0;
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey)}`, {
-          method: "PATCH",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ input_wip: initSub, output_wip: 0, updated_at: new Date().toISOString() })
-        });
-        if (cfg.hasRaw) {
-          const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
-          await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey + "_RAW")}`, {
-            method: "PATCH",
-            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ input_wip: initRaw, output_wip: 0, updated_at: new Date().toISOString() })
-          });
-        }
-      }
-    } catch (e) {}
-
-    alert(`✓ 【${group}】的生產紀錄已全數清空，庫存已全部歸零重置！各工站作業員可開始新一輪競賽。`);
+    alert(`✓ 【${group}】在【${viewRound.label}】的生產紀錄已清空，庫存已歸零重置！（其他測試場次的數據均完整保留）`);
     loadAll();
   } catch (err) {
     alert("清空重置失敗：" + err.message);
   }
 };
+
+// 🧭 讀取並解析指定組別與場次的專屬流程圖 (支援 G01-T1 ~ G01-T10, G01-OFFICIAL 各自獨立，若新場次尚未自訂則自動繼承前一場次或基準流程)
+async function fetchAndResolveFlowsForRound(group, viewRound) {
+  window.cachedGroupFlows = window.cachedGroupFlows || {};
+  const vr = viewRound || getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, vr);
+
+  let allGroupRows = [];
+  try {
+    const flowRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_flow?or=(group_id.eq.${encodeURIComponent(group)},group_id.like.${encodeURIComponent(group)}-*)&order=station_id.asc`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const json = await flowRes.json();
+    if (Array.isArray(json)) {
+      allGroupRows = json;
+    }
+  } catch (e) {}
+
+  // 依 group_id 分類快取 (例如 G01, G01-T1, G01-T2, ..., G01-OFFICIAL)
+  const byKey = {};
+  allGroupRows.forEach(row => {
+    const k = (row.group_id || "").trim();
+    if (!k) return;
+    if (!byKey[k]) byKey[k] = [];
+    byKey[k].push(row);
+  });
+  Object.keys(byKey).forEach(k => {
+    window.cachedGroupFlows[k] = byKey[k];
+  });
+
+  // 候選查找順序：1. 該場次專屬 flowKey -> 2. 前序測試場次 -> 3. 組別基準 group
+  const candidateKeys = [flowKey];
+  if (vr.mode === "TEST" && vr.round > 1) {
+    for (let r = vr.round - 1; r >= 1; r--) {
+      candidateKeys.push(`${group}-T${r}`);
+    }
+  } else if (vr.mode === "OFFICIAL") {
+    for (let r = currentTestRound; r >= 1; r--) {
+      candidateKeys.push(`${group}-T${r}`);
+    }
+  }
+  if (!candidateKeys.includes(group)) {
+    candidateKeys.push(group);
+  }
+
+  for (const key of candidateKeys) {
+    if (byKey[key] && byKey[key].length > 0) {
+      window.cachedGroupFlows[flowKey] = byKey[key];
+      return byKey[key];
+    }
+    const localRaw = localStorage.getItem(`ie_chair_flow_backup_${key}`);
+    if (localRaw) {
+      try {
+        const localFlows = JSON.parse(localRaw);
+        if (Array.isArray(localFlows) && localFlows.length > 0) {
+          window.cachedGroupFlows[flowKey] = localFlows;
+          return localFlows;
+        }
+      } catch (e) {}
+    }
+  }
+
+  return [];
+}
+
+// 依據單筆 Event 紀錄取得其所屬場次的工站流向標籤 (供詳細數據 Table 與 CSV 顯示不同測試場次之流程關係)
+function getStationFlowInfoForEvent(row) {
+  const st = (row && row.station_id ? row.station_id : "").trim();
+  const grp = (row && row.group_id ? row.group_id : "").trim();
+  if (!st || !grp) return { flowKey: grp, nextText: "", html: st, csvFlow: st };
+
+  const isT = isTestProductId(row.product_id);
+  const rRound = isT ? (getTestRoundFromProductId(row.product_id) || 1) : null;
+  const flowKey = isT ? `${grp}-T${rRound}` : `${grp}-OFFICIAL`;
+
+  const cache = window.cachedGroupFlows || {};
+  let flows = cache[flowKey];
+  if (!Array.isArray(flows) || flows.length === 0) {
+    const localRaw = localStorage.getItem(`ie_chair_flow_backup_${flowKey}`);
+    if (localRaw) {
+      try { flows = JSON.parse(localRaw); } catch(e) {}
+    }
+  }
+  if ((!Array.isArray(flows) || flows.length === 0) && isT && rRound > 1) {
+    for (let r = rRound - 1; r >= 1; r--) {
+      const k = `${grp}-T${r}`;
+      if (Array.isArray(cache[k]) && cache[k].length > 0) { flows = cache[k]; break; }
+    }
+  }
+  if (!Array.isArray(flows) || flows.length === 0) {
+    flows = cache[grp] || [];
+    if (flows.length === 0) {
+      const baseRaw = localStorage.getItem(`ie_chair_flow_backup_${grp}`);
+      if (baseRaw) {
+        try { flows = JSON.parse(baseRaw) || []; } catch(e) {}
+      }
+    }
+  }
+
+  if (!Array.isArray(flows) || flows.length === 0) {
+    return { flowKey, nextText: "", html: `<b>${st}</b>`, csvFlow: st };
+  }
+
+  const preds = flows.filter(f => (f.next_station_id || "").trim() === st).map(f => (f.station_id || "").trim()).filter(Boolean);
+  const succs = flows.filter(f => (f.station_id || "").trim() === st).map(f => (f.next_station_id || "").trim()).filter(Boolean);
+  const isRoot = preds.length === 0;
+  const isTerm = succs.length === 0;
+
+  let badge = "";
+  let csvFlow = st;
+  if (isRoot && !isTerm) {
+    badge = `<span style="font-size:11px; color:#0369a1; background:#e0f2fe; border:1px solid #bae6fd; padding:1px 6px; border-radius:4px; margin-left:4px; white-space:nowrap;">🏁起點 ➔ ${succs.join("/")}</span>`;
+    csvFlow = `${st}(起點)->${succs.join("/")}`;
+  } else if (isTerm) {
+    badge = `<span style="font-size:11px; color:#7e22ce; background:#f3e8ff; border:1px solid #d8b4fe; padding:1px 6px; border-radius:4px; margin-left:4px; white-space:nowrap;">🏁終點站</span>`;
+    csvFlow = `${st}(終點)`;
+  } else {
+    badge = `<span style="font-size:11px; color:#475569; background:#f1f5f9; border:1px solid #cbd5e1; padding:1px 6px; border-radius:4px; margin-left:4px; white-space:nowrap;">➔ ${succs.join("/")}</span>`;
+    csvFlow = `${st}->${succs.join("/")}`;
+  }
+
+  return {
+    flowKey,
+    nextText: succs.join("/"),
+    html: `<b>${st}</b>${badge}`,
+    csvFlow
+  };
+}
 
 // 核心讀取與渲染
 async function loadAll() {
@@ -1194,7 +1364,8 @@ async function loadAll() {
     const evRes = await fetch(eventUrl, {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     });
-    currentEvents = await evRes.json();
+    const evJson = await evRes.json();
+    currentEvents = Array.isArray(evJson) ? evJson : [];
 
     // 前端二次排序保證嚴格由最早至最新 (Earliest to Latest)
     currentEvents.sort((a, b) => {
@@ -1209,7 +1380,7 @@ async function loadAll() {
           headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
         });
         const modeRows = await modeRes.json();
-        if (modeRows && modeRows.length > 0 && !isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
+        if (Array.isArray(modeRows) && modeRows.length > 0 && !isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
           const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
           currentSystemMode = decodedMode.mode;
           currentTestRound = decodedMode.round;
@@ -1224,9 +1395,6 @@ async function loadAll() {
     } catch(e) {}
 
     updateFlowViewRoundUI();
-    showTable(currentEvents);
-    showStats(currentEvents);
-    document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
 
     if (group !== "ALL") {
       document.getElementById("flowCard").style.display = "block";
@@ -1239,12 +1407,15 @@ async function loadAll() {
         gotoBtn.style.display = "inline-flex";
       }
       await renderFlowDiagram(group);
-      showStats(currentEvents);
     } else {
       document.getElementById("flowCard").style.display = "none";
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) gotoBtn.style.display = "none";
     }
+
+    showTable(currentEvents);
+    showStats(currentEvents);
+    document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
 
     const now = new Date().toLocaleTimeString();
     document.getElementById("status").textContent = `最後同步：${now} (${currentEvents.length} 筆)`;
@@ -1253,58 +1424,38 @@ async function loadAll() {
   }
 }
 
-// 畫工站順序圖 (支援多站匯流齊套數計算)
+// 畫工站順序圖 (支援每次測試擁有獨立流程圖 + 多站匯流齊套數計算)
 async function renderFlowDiagram(group) {
   const container = document.getElementById("flowchartContainer");
+  const viewRound = getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, viewRound);
 
-  const [flowRes, wipRes] = await Promise.all([
-    fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}&order=station_id.asc`, {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-    }),
+  const [flows, wipRes] = await Promise.all([
+    fetchAndResolveFlowsForRound(group, viewRound),
     fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${group}`, {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     })
   ]);
 
-  const flows = await flowRes.json();
-  const wips = await wipRes.json();
+  const wipsJson = await wipRes.json();
+  const wips = Array.isArray(wipsJson) ? wipsJson : [];
   window.cachedGroupFlows = window.cachedGroupFlows || {};
   if (Array.isArray(flows) && flows.length > 0) {
+    window.cachedGroupFlows[flowKey] = flows;
     window.cachedGroupFlows[group] = flows;
   }
 
-  if (flows.length === 0) {
-    // 🛡️ 檢查本地是否有此組流程備份，若有則自動重送雲端防護
-    const localBackupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
-    if (localBackupRaw) {
-      try {
-        const localFlows = JSON.parse(localBackupRaw);
-        if (Array.isArray(localFlows) && localFlows.length > 0) {
-          console.warn(`偵測到 ${group} 雲端無資料但有本地備份，自動回補雲端...`);
-          await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
-            method: "POST",
-            headers: {
-              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(localFlows)
-          });
-          return renderFlowDiagram(group);
-        }
-      } catch(e) {}
-    }
-
+  if (!Array.isArray(flows) || flows.length === 0) {
     container.innerHTML = `
       <div style="text-align:center; padding: 20px;">
-        <p style="color:#64748b;">本組（${group}）尚未設定工站順序流程。</p>
+        <p style="color:#64748b;">本組（${group}）於【${viewRound.label}】尚未設定工站順序流程。</p>
         <button onclick="openFlowModal()" class="btn-edit" style="padding:8px 16px;">
-          🛠️ 立即自訂本組工站順序
+          🛠️ 立即自訂【${viewRound.label}】工站順序
         </button>
       </div>`;
     return;
   }
 
-  const viewRound = getEffectiveViewRound();
   const roundEvents = currentEvents.filter(r =>
     (r.group_id || "").trim() === group && isEventInViewRound(r, viewRound)
   );
@@ -1329,7 +1480,7 @@ async function renderFlowDiagram(group) {
     if (f.next_station_id) stationSet.add(f.next_station_id.trim());
   });
 
-  // 確保每個上線工站在該檢視場次都有獨立且精準的完工數 (outWip)，讓第 1 次與第 2 次測試流程圖成績完全獨立互不影響
+  // 確保每個上線工站在該檢視場次都有獨立且精準的完工數 (outWip)，讓第 1~10 次測試流程圖成績完全獨立互不影響
   stationSet.forEach(stId => {
     if (stId === "SYSTEM_MODE") return;
     if (!wipMap[stId]) {
@@ -1345,7 +1496,7 @@ async function renderFlowDiagram(group) {
   stationSet.forEach(stId => {
     if (stId === "SYSTEM_MODE") return;
     const w = wipMap[stId] || { inWip: 0, outWip: 0 };
-    const rawCfg = getStationRaw(group, stId);
+    const rawCfg = getStationRaw(group, stId, viewRound);
     const hasRaw = !!rawCfg.hasRaw;
     const rawName = rawCfg.rawName || "";
 
@@ -1416,7 +1567,7 @@ async function renderFlowDiagram(group) {
       let downstreamConsumed = 0;
       successors.forEach(s => {
         const sWip = wipMap[s] || { inWip: 0, outWip: 0 };
-        const sRawCfg = getStationRaw(group, s);
+        const sRawCfg = getStationRaw(group, s, viewRound);
         const sHasCfgSub = (sRawCfg.subInit !== undefined && sRawCfg.subInit !== null);
         const sCfgSub = sHasCfgSub ? Math.max(0, parseInt(sRawCfg.subInit, 10) || 0) : 0;
         const sManualAdded = (sWip.outWip === 0 && sHasCfgSub) ? sCfgSub : Math.max(sWip.inWip || 0, sCfgSub);
@@ -1496,35 +1647,31 @@ async function openFlowModal() {
     alert("請先選擇特定的單一組別（例如 G02）再自訂工站流程！");
     return;
   }
+
+  const viewRound = getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, viewRound);
+  const titleEl = document.getElementById("flowModalTitle");
+  const badgeEl = document.getElementById("flowModalRoundBadge");
+  if (titleEl) {
+    titleEl.textContent = `🛠️ 自訂【${group} - ${viewRound.label}】工站前後流向關係`;
+  }
+  if (badgeEl) {
+    badgeEl.textContent = `場次代碼：${flowKey}`;
+  }
+
   document.getElementById("flowModal").style.display = "block";
   const container = document.getElementById("flowRowsContainer");
   container.innerHTML = "<div style='color:#64748b;'>載入現有順序...</div>";
   const rawContainer = document.getElementById("modalRawConfigContainer");
   if (rawContainer) rawContainer.innerHTML = "";
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${group}&order=station_id.asc`, {
-    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-  });
-  const data = await res.json();
+  const data = await fetchAndResolveFlowsForRound(group, viewRound);
   container.innerHTML = "";
 
-  if (data.length > 0) {
+  if (Array.isArray(data) && data.length > 0) {
     data.forEach(item => addFlowRow(item.station_id, item.next_station_id, false));
   } else {
-    const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${group}`);
-    let restored = false;
-    if (backupRaw) {
-      try {
-        const backupData = JSON.parse(backupRaw);
-        if (Array.isArray(backupData) && backupData.length > 0) {
-          backupData.forEach(item => addFlowRow(item.station_id, item.next_station_id, false));
-          restored = true;
-        }
-      } catch(e) {}
-    }
-    if (!restored) {
-      presetStandardFlow(false);
-    }
+    presetStandardFlow(false);
   }
 
   // 依上方流程圖有幾組工站，下方零件選擇就動態顯示幾組
@@ -1535,7 +1682,7 @@ function closeFlowModal() {
   document.getElementById("flowModal").style.display = "none";
 }
 
-// 取得當前流向編輯器中所有有出現的工站代號 (保持 ST01~ST08 自然順序)
+// 取得當前流向編輯器中所有有出現的工站代號 (保持 ST01~ST10 自然順序)
 function getStationsFromFlowModal() {
   const set = new Set();
   const rows = document.querySelectorAll("#flowRowsContainer .flow-row");
@@ -1557,6 +1704,9 @@ function refreshModalRawConfigs(group) {
   if (!group) group = document.getElementById("groupSelect").value;
   const rawContainer = document.getElementById("modalRawConfigContainer");
   if (!rawContainer) return;
+
+  const viewRound = getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, viewRound);
 
   const flowRows = document.querySelectorAll("#flowRowsContainer .flow-row");
   const flowPairs = [];
@@ -1584,9 +1734,9 @@ function refreshModalRawConfigs(group) {
     tempValues[st].rawInit = (initVal !== undefined && initVal !== "") ? parseInt(initVal, 10) : undefined;
   });
 
-  // 2. 取得儲存在 localStorage 的組別設定
+  // 2. 取得儲存在 localStorage 的場次設定 (優先讀取該場次 flowKey，若無則繼承 group)
   const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-  const groupRaw = allRaw[group] || {};
+  const groupRaw = allRaw[flowKey] || allRaw[group] || {};
 
   // 3. 取得目前上方流程中有配置的工站 (有幾組出現幾組)
   const activeStations = getStationsFromFlowModal();
@@ -1717,11 +1867,22 @@ async function saveCustomFlow() {
     return;
   }
 
+  const viewRound = getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, viewRound);
+
+  // 為該場次建立獨立的 station_flow 資料列 (group_id = G01-T1 ~ G01-T10 或 G01-OFFICIAL)
   const payload = [];
+  const basePayload = [];
   rows.forEach(r => {
     const from = r.querySelector(".from-st").value;
     const to = r.querySelector(".to-st").value || null;
     payload.push({
+      group_id: flowKey,
+      station_id: from,
+      station_name: from,
+      next_station_id: to
+    });
+    basePayload.push({
       group_id: group,
       station_id: from,
       station_name: from,
@@ -1729,9 +1890,9 @@ async function saveCustomFlow() {
     });
   });
 
-  // 收集並保存原生零件投料設定與強制前置半成品初始備料 (subInit)
+  // 收集並保存原生零件投料設定與強制前置半成品初始備料 (subInit) 至該場次 flowKey
   const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-  const newGroupRaw = allRaw[group] || {};
+  const newGroupRaw = {};
   const activeStations = getStationsFromFlowModal();
   activeStations.forEach(st => {
     const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
@@ -1757,18 +1918,44 @@ async function saveCustomFlow() {
       rawInit: rawInitStr !== "" ? (parseInt(rawInitStr, 10) || 0) : ""
     };
   });
-  allRaw[group] = newGroupRaw;
+  allRaw[flowKey] = newGroupRaw;
+  if (viewRound.isLive) {
+    allRaw[group] = newGroupRaw;
+  }
   localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(allRaw));
 
   try {
-    // 🛡️ 同步寫入本地備份 (即使無網路或隔天開啟也能立即可用)
-    localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(payload));
+    // 🛡️ 若目前修改的是第 2~10 次測試或正式實作，且第 1 次測試 (`${group}-T1`) 尚未獨立封存，先將原本舊的 `${group}` 流程自動快照封存至 `${group}-T1`，確保第 1 次測試流程圖 100% 不被覆蓋！
+    if (flowKey !== `${group}-T1`) {
+      const t1Key = `${group}-T1`;
+      const existingT1 = window.cachedGroupFlows && window.cachedGroupFlows[t1Key];
+      const existingBase = window.cachedGroupFlows && window.cachedGroupFlows[group];
+      if ((!existingT1 || existingT1.length === 0) && Array.isArray(existingBase) && existingBase.length > 0) {
+        const t1Snapshot = existingBase.map(item => ({
+          group_id: t1Key,
+          station_id: item.station_id,
+          station_name: item.station_name || item.station_id,
+          next_station_id: item.next_station_id || null
+        }));
+        localStorage.setItem(`ie_chair_flow_backup_${t1Key}`, JSON.stringify(t1Snapshot));
+        await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(t1Key)}`, {
+          method: "DELETE",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+          method: "POST",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify(t1Snapshot)
+        });
+      }
+    }
 
-    const delRes = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+    // 🛡️ 寫入該場次專屬的本地備份與雲端 station_flow (group_id = flowKey)
+    localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(payload));
+    await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(flowKey)}`, {
       method: "DELETE",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     });
-
     const postRes = await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
       method: "POST",
       headers: {
@@ -1783,71 +1970,56 @@ async function saveCustomFlow() {
       throw new Error(`雲端寫入失敗 (${postRes.status}): ${errText}`);
     }
 
+    // 若編輯的是當前進行中的場次，同步更新基準 group_id，讓現場手機與桌牌頁面也能無縫取得最新場次流程
+    if (viewRound.isLive) {
+      localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(basePayload));
+      await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(basePayload)
+      });
+    }
+
     closeFlowModal();
-    const clearOld = confirm(`✓ 流程順序已成功儲存！順序圖已即時更新。\n\n💡 建議：是否要一併清空【${group}】先前的舊測試紀錄與庫存，以全新狀態開始計時？\n（點擊「確定」自動重置舊紀錄；點擊「取消」保留目前紀錄）`);
+    const clearOld = confirm(`✓ 【${group} - ${viewRound.label}】的專屬流程圖已成功儲存！（其他場次的流程圖不受影響）\n\n💡 建議：是否要一併清空【${group}】在【${viewRound.label}】的舊紀錄與庫存，以全新狀態開始計時？\n（點擊「確定」僅重置本場次紀錄；點擊「取消」保留目前紀錄）`);
     if (clearOld) {
       try {
-        await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
-          method: "DELETE",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-        });
+        await deleteGroupRoundEvents(group, viewRound);
       } catch(e) {}
     }
 
-    // 🌟 同步更新每站的 station_wip：起始站 input_wip = 0，後續工站立即套用設定之半成品數 subInit (可為 0 或任意正整數)
-    try {
-      for (const st of activeStations) {
-        const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
-        const isRoot = preds.length === 0;
-        const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 0);
+    // 🌟 若為目前進行中場次，同步更新每站的 station_wip：起始站 input_wip = 0，後續工站立即套用設定之半成品數 subInit
+    if (viewRound.isLive) {
+      try {
+        for (const st of activeStations) {
+          const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
+          const isRoot = preds.length === 0;
+          const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 0);
 
-        const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(st)}&select=id,input_wip,output_wip`, {
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-        });
-        const existing = await checkRes.json();
-        if (existing && existing.length > 0) {
-          await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
-            method: "PATCH",
-            headers: {
-              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              input_wip: initialInput,
-              output_wip: clearOld ? 0 : existing[0].output_wip,
-              updated_at: new Date().toISOString()
-            })
-          });
-        } else {
-          await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-            method: "POST",
-            headers: {
-              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ group_id: group, station_id: st, input_wip: initialInput, output_wip: 0 })
-          });
-        }
-
-        // 若有附加專屬零件，同步更新 ${st}_RAW
-        if (newGroupRaw[st]?.hasRaw) {
-          const rawSt = `${st}_RAW`;
-          const rawInit = newGroupRaw[st].rawInit || 0;
-          const checkRaw = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(rawSt)}&select=id`, {
+          const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(st)}&select=id,input_wip,output_wip`, {
             headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
           });
-          const existingRaw = await checkRaw.json();
-          if (existingRaw && existingRaw.length > 0) {
-            if (clearOld) {
-              await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingRaw[0].id}`, {
-                method: "PATCH",
-                headers: {
-                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ input_wip: rawInit, output_wip: 0, updated_at: new Date().toISOString() })
-              });
-            }
+          const existing = await checkRes.json();
+          if (Array.isArray(existing) && existing.length > 0) {
+            await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+              method: "PATCH",
+              headers: {
+                apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                input_wip: initialInput,
+                output_wip: clearOld ? 0 : existing[0].output_wip,
+                updated_at: new Date().toISOString()
+              })
+            });
           } else {
             await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
               method: "POST",
@@ -1855,13 +2027,44 @@ async function saveCustomFlow() {
                 apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
                 "Content-Type": "application/json"
               },
-              body: JSON.stringify({ group_id: group, station_id: rawSt, input_wip: rawInit, output_wip: 0 })
+              body: JSON.stringify({ group_id: group, station_id: st, input_wip: initialInput, output_wip: 0 })
             });
           }
+
+          // 若有附加專屬零件，同步更新 ${st}_RAW
+          if (newGroupRaw[st]?.hasRaw) {
+            const rawSt = `${st}_RAW`;
+            const rawInit = newGroupRaw[st].rawInit || 0;
+            const checkRaw = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(rawSt)}&select=id`, {
+              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+            });
+            const existingRaw = await checkRaw.json();
+            if (Array.isArray(existingRaw) && existingRaw.length > 0) {
+              if (clearOld) {
+                await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingRaw[0].id}`, {
+                  method: "PATCH",
+                  headers: {
+                    apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({ input_wip: rawInit, output_wip: 0, updated_at: new Date().toISOString() })
+                });
+              }
+            } else {
+              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ group_id: group, station_id: rawSt, input_wip: rawInit, output_wip: 0 })
+              });
+            }
+          }
         }
+      } catch(errWip) {
+        console.warn("同步 station_wip 發生警告：", errWip);
       }
-    } catch(errWip) {
-      console.warn("同步 station_wip 發生警告：", errWip);
     }
 
     loadAll();
@@ -1870,14 +2073,15 @@ async function saveCustomFlow() {
   }
 }
 
-// 顯示詳細 Event Table
+// 顯示詳細 Event Table (包含呈現各場次對應的工站流向關係)
 function showTable(data) {
   const tbody = document.querySelector("#dataTable tbody");
   tbody.innerHTML = "";
+  const safeData = Array.isArray(data) ? data : [];
 
-  const totalCount = data.length;
-  const officialCount = data.filter(r => !isTestProductId(r.product_id)).length;
-  const testCount = data.filter(r => isTestProductId(r.product_id)).length;
+  const totalCount = safeData.length;
+  const officialCount = safeData.filter(r => !isTestProductId(r.product_id)).length;
+  const testCount = safeData.filter(r => isTestProductId(r.product_id)).length;
 
   const elAll = document.getElementById("countAll");
   const elOff = document.getElementById("countOfficial");
@@ -1886,11 +2090,11 @@ function showTable(data) {
   if (elOff) elOff.textContent = officialCount;
   if (elTst) elTst.textContent = testCount;
 
-  let filtered = data;
+  let filtered = safeData;
   if (currentTableFilter === "OFFICIAL") {
-    filtered = data.filter(r => !isTestProductId(r.product_id));
+    filtered = safeData.filter(r => !isTestProductId(r.product_id));
   } else if (currentTableFilter === "TEST") {
-    filtered = data.filter(r => {
+    filtered = safeData.filter(r => {
       if (!isTestProductId(r.product_id)) return false;
       if (currentTestRoundFilter !== "ALL_TEST") {
         return getTestRoundFromProductId(r.product_id) === parseInt(currentTestRoundFilter, 10);
@@ -1901,6 +2105,7 @@ function showTable(data) {
 
   filtered.forEach((row, idx) => {
     const partNo = getStationPart(row.group_id, row.station_id);
+    const flowInfo = getStationFlowInfoForEvent(row);
     const tr = document.createElement("tr");
 
     // 簡化 ID 欄位：以簡潔序號 (#1, #2...) 呈現，滑鼠懸浮可查看完整 UUID
@@ -1928,7 +2133,7 @@ function showTable(data) {
           ? `<span style="background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🧪第${tRound || 1}次測試</span><b>${row.product_id || '-'}</b>`
           : `<span style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:bold; margin-right:4px;">🏆正式</span><b>${row.product_id || '-'}</b>`;
       })(),
-      row.station_id,
+      flowInfo.html,
       partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : "-",
       wipDisplay,
       row.start_time ? new Date(row.start_time).toLocaleTimeString() : "",
@@ -1940,7 +2145,7 @@ function showTable(data) {
 
     values.forEach((v, idx) => {
       const td = document.createElement("td");
-      if (idx === 0 || idx === 2 || idx === 4 || idx === 5) {
+      if (idx === 0 || idx === 2 || idx === 3 || idx === 4 || idx === 5) {
         td.innerHTML = v;
       } else {
         td.textContent = v ?? "";
@@ -2102,11 +2307,12 @@ function showStats(data) {
     const runRows = rows;
     activityRoundLabel = viewRound.label;
 
-    // 找出該組流程的終點工站 (Final Station)
-    let groupFlows = (window.cachedGroupFlows && window.cachedGroupFlows[curGroup]) || [];
+    // 找出該組於該場次流程的終點工站 (Final Station)
+    const curFlowKey = getFlowKeyForRound(curGroup, viewRound);
+    let groupFlows = (window.cachedGroupFlows && (window.cachedGroupFlows[curFlowKey] || window.cachedGroupFlows[curGroup])) || [];
     if (groupFlows.length === 0 && curGroup !== "ALL") {
       try {
-        const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${curGroup}`);
+        const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${curFlowKey}`) || localStorage.getItem(`ie_chair_flow_backup_${curGroup}`);
         if (backupRaw) groupFlows = JSON.parse(backupRaw) || [];
       } catch (e) {}
     }
@@ -2258,7 +2464,7 @@ function showStats(data) {
       : station;
 
     const partNo = getStationPart(curGroup, station);
-    const rawCfg = getStationRaw(curGroup, station);
+    const rawCfg = getStationRaw(curGroup, station, viewRound);
     let partCell = partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : `<span style="color:#94a3b8;">-</span>`;
     if (rawCfg.hasRaw && rawCfg.rawName) {
       partCell += `<br><span style="font-size:11px; color:#b45309; font-weight:bold;">📦 含${rawCfg.rawName}</span>`;
@@ -2346,19 +2552,22 @@ function showStats(data) {
   }
 }
 
-// 下載 CSV (含本次生產活動節拍時間摘要)
+// 下載 CSV (含各測試場次專屬流程關係與本次生產活動 Cycle Time 摘要)
 document.getElementById("downloadBtn").onclick = () => {
   if (currentEvents.length === 0) return;
-  const cols = ["id","group_id","product_id","station_id","part_no","wip_before_start","start_time","finish_time","duration_sec","wip_after_finish","status"];
+  const cols = ["id","group_id","round_flow_id","product_id","station_id","station_flow","part_no","wip_before_start","start_time","finish_time","duration_sec","wip_after_finish","status"];
   const csvRows = [cols.join(",")];
 
   currentEvents.forEach(row => {
     const partNo = getStationPart(row.group_id, row.station_id);
+    const flowInfo = getStationFlowInfoForEvent(row);
     const r = [
       row.id,
       row.group_id,
+      `"${flowInfo.flowKey || ''}"`,
       row.product_id ?? "",
       row.station_id,
+      `"${flowInfo.csvFlow || row.station_id || ''}"`,
       `"${partNo || ''}"`,
       row.wip_before_start ?? "",
       row.start_time ?? "",

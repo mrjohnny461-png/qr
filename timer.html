@@ -666,10 +666,34 @@ function updateCooldownBadgeUI() {
   if (fcb) fcb.textContent = currentFinishCooldownSec;
 }
 
+// 取得目前系統場次對應的專屬流程 Key (例如 G01-T1 ~ G01-T10, G01-OFFICIAL)
+function getCurrentFlowKey() {
+  if (currentSystemMode === "OFFICIAL") return `${groupId}-OFFICIAL`;
+  const r = Math.min(10, Math.max(1, parseInt(currentTestRound, 10) || 1));
+  return `${groupId}-T${r}`;
+}
+
 // 初始化
 async function init() {
   showMsg("同步全產線物料關係與歷史資料...", "#64748b");
   try {
+    // 先同步雲端 SYSTEM_MODE，確保一開始就讀取到正確的第 N 次測試專屬流程圖
+    try {
+      const modeRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=input_wip,output_wip`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const modeRows = await modeRes.json();
+      if (Array.isArray(modeRows) && modeRows.length > 0) {
+        const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
+        currentSystemMode = decodedMode.mode;
+        currentTestRound = decodedMode.round;
+        const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
+        currentCooldownSec = decodedCd.startCd;
+        currentFinishCooldownSec = decodedCd.finishCd;
+      }
+    } catch (e) {}
+
     updateModeBadgeUI();
     updateCooldownBadgeUI();
     await updateFlowInfo();
@@ -692,32 +716,66 @@ async function init() {
   }
 }
 
-// 取得工站拓撲關係 (含本地備份與 URL 參數多重保護，確保下游站絕不誤判為起始站)
+// 取得工站拓撲關係 (支援第 1~10 次測試與正式實作各自擁有獨立流程圖，並含本地備份與自動繼承保護)
 async function updateFlowInfo() {
   let flowData = [];
+  const flowKey = getCurrentFlowKey();
+
+  const candidateKeys = [flowKey];
+  if (currentSystemMode === "TEST" && currentTestRound > 1) {
+    for (let r = currentTestRound - 1; r >= 1; r--) {
+      candidateKeys.push(`${groupId}-T${r}`);
+    }
+  } else if (currentSystemMode === "OFFICIAL") {
+    for (let r = currentTestRound; r >= 1; r--) {
+      candidateKeys.push(`${groupId}-T${r}`);
+    }
+  }
+  if (!candidateKeys.includes(groupId)) {
+    candidateKeys.push(groupId);
+  }
+
   try {
     const flowRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${groupId}&select=*`,
+      `${SUPABASE_URL}/rest/v1/station_flow?or=(group_id.eq.${encodeURIComponent(groupId)},group_id.like.${encodeURIComponent(groupId)}-*)&select=*`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     if (flowRes.ok) {
       const fetched = await flowRes.json();
       if (Array.isArray(fetched) && fetched.length > 0) {
-        flowData = fetched;
-        try { localStorage.setItem(`ie_chair_flow_backup_${groupId}`, JSON.stringify(fetched)); } catch(e) {}
+        const byKey = {};
+        fetched.forEach(row => {
+          const k = (row.group_id || "").trim();
+          if (!k) return;
+          if (!byKey[k]) byKey[k] = [];
+          byKey[k].push(row);
+        });
+        for (const k of candidateKeys) {
+          if (byKey[k] && byKey[k].length > 0) {
+            flowData = byKey[k];
+            try { localStorage.setItem(`ie_chair_flow_backup_${k}`, JSON.stringify(byKey[k])); } catch(e) {}
+            break;
+          }
+        }
       }
     }
   } catch(e) {}
 
-  // 若雲端暫時無回應，自動使用本地備份流程
-  if (flowData.length === 0) {
-    try {
-      const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${groupId}`);
-      if (backupRaw) {
-        const parsed = JSON.parse(backupRaw);
-        if (Array.isArray(parsed) && parsed.length > 0) flowData = parsed;
-      }
-    } catch(e) {}
+  // 若雲端暫時無回應，自動依候選順序使用本地備份流程
+  if (!Array.isArray(flowData) || flowData.length === 0) {
+    flowData = [];
+    for (const k of candidateKeys) {
+      try {
+        const backupRaw = localStorage.getItem(`ie_chair_flow_backup_${k}`);
+        if (backupRaw) {
+          const parsed = JSON.parse(backupRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            flowData = parsed;
+            break;
+          }
+        }
+      } catch(e) {}
+    }
   }
 
   feederStations = flowData
@@ -1151,6 +1209,7 @@ async function autoSyncLive() {
           currentTestRound = decodedMode.round;
           try { localStorage.setItem("ie_chair_test_round", String(currentTestRound)); } catch(e) {}
           updateModeBadgeUI();
+          await updateFlowInfo();
           if (!isWorking) await syncHistoryFromDb();
         }
         if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec) {

@@ -88,7 +88,7 @@
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
       <h1 style="margin:0;">📱 IE Chair 工站 QR Code 產生器</h1>
-      <a href="工蓋螢幕.html" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:600; background:#eff6ff; padding:6px 14px; border-radius:8px; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:4px;">
+      <a id="backToMonitorBtn" href="工蓋螢幕.html" style="font-size:13px; color:#2563eb; text-decoration:none; font-weight:600; background:#eff6ff; padding:6px 14px; border-radius:8px; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:4px;">
         🖥️ 前往主監控看板 (現場看板模式) ❯
       </a>
     </div>
@@ -135,7 +135,7 @@
     <!-- 選擇組別與工站 -->
     <div class="grid-2">
       <div class="form-group">
-        <label>組別 (Group)：</label>
+        <label id="groupSelectLabel">組別 (Group)：</label>
         <select id="groupSelect">
           <option value="G01">G01</option>
           <option value="G02" selected>G02</option>
@@ -149,6 +149,14 @@
           <option value="G10">G10</option>
           <option value="G11">G11</option>
           <option value="G12">G12</option>
+          <option value="G13">G13</option>
+          <option value="G14">G14</option>
+          <option value="G15">G15</option>
+          <option value="G16">G16</option>
+          <option value="G17">G17</option>
+          <option value="G18">G18</option>
+          <option value="G19">G19</option>
+          <option value="G20">G20</option>
         </select>
       </div>
 
@@ -231,15 +239,27 @@
   </div>
 
 <script>
-  // 永久固定網址與雲端資料庫常數
-  const FIXED_BASE_URL = "https://mrjohnny461-png.github.io/qr/timer.html";
+  // 🌟 自動偵測當前部署網站網址 (若於 GitHub Pages 等雲端網站開啟，自動對應同目錄下的 timer.html；本機離線開啟則使用預設雲端網址)
+  const FIXED_BASE_URL = (function() {
+    try {
+      const loc = window.location.href.split("?")[0].split("#")[0];
+      if (loc.startsWith("http://") || loc.startsWith("https://")) {
+        const dir = loc.substring(0, loc.lastIndexOf("/") + 1);
+        return dir + "timer.html";
+      }
+    } catch (e) {}
+    return "https://mrjohnny461-png.github.io/qr/timer.html";
+  })();
+  const baseUrlInputEl = document.getElementById("baseUrl");
+  if (baseUrlInputEl) baseUrlInputEl.value = FIXED_BASE_URL;
+
   const SUPABASE_URL = "https://fqbsrcbxtmagczykoesv.supabase.co";
   const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
 
   let currentFullUrl = "";
   const ALL_STATIONS = ["ST01", "ST02", "ST03", "ST04", "ST05", "ST06", "ST07", "ST08", "ST09", "ST10"];
   let STATIONS = [...ALL_STATIONS];
-  const GROUPS = ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12"];
+  const GROUPS = ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19", "G20"];
 
   const groupSelect = document.getElementById("groupSelect");
   const stationSelect = document.getElementById("stationSelect");
@@ -249,15 +269,29 @@
   const lockBadge = document.getElementById("lockStatusBadge");
   const lockHint = document.getElementById("lockHintText");
   const qrViewRoundSelect = document.getElementById("qrViewRoundSelect");
+  const backToMonitorBtn = document.getElementById("backToMonitorBtn");
 
-  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02&round=3)，其次讀取上次儲存之組別
+  // 🌟 優先從 URL 參數讀取指定組別 (?group=G02&round=3&lock=1)，其次讀取上次儲存之組別
   const urlParams = new URLSearchParams(window.location.search);
   const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
   const paramRound = (urlParams.get("round") || "").trim().toUpperCase();
+  const paramLock = (urlParams.get("lock") || "").trim();
   const savedGroup = localStorage.getItem("ie_chair_selected_group");
+  let qrUrlLockedGroup = null;
 
   if (paramGroup && GROUPS.includes(paramGroup)) {
     groupSelect.value = paramGroup;
+    localStorage.setItem("ie_chair_selected_group", paramGroup);
+    if (paramLock !== "0") {
+      qrUrlLockedGroup = paramGroup;
+      groupSelect.disabled = true;
+      groupSelect.style.background = "#e2e8f0";
+      groupSelect.style.color = "#1d4ed8";
+      const grpLbl = document.getElementById("groupSelectLabel");
+      if (grpLbl) grpLbl.innerHTML = `組別 (Group) <span style="color:#1d4ed8; font-size:12px;">🔒 已綁定專屬組別 ${paramGroup}</span>：`;
+      const copyAllBtn = document.getElementById("copyToAllGroupsBtn");
+      if (copyAllBtn) copyAllBtn.style.display = "none";
+    }
   } else if (savedGroup && GROUPS.includes(savedGroup)) {
     groupSelect.value = savedGroup;
   }
@@ -608,9 +642,18 @@
 
   // 渲染當前選取組別與場次之料號、原生零件設定與動態工站卡片
   async function renderCurrentGroup() {
+    if (qrUrlLockedGroup) {
+      groupSelect.value = qrUrlLockedGroup;
+    }
     activeGroup = groupSelect.value || "G02";
     const eff = getEffectiveQrRound();
     const curFlowKey = getCurrentQrFlowKey(activeGroup);
+
+    if (backToMonitorBtn) {
+      const lockSuffix = qrUrlLockedGroup ? "&lock=1" : "";
+      backToMonitorBtn.href = `工蓋螢幕.html?group=${encodeURIComponent(activeGroup)}${lockSuffix}`;
+      backToMonitorBtn.innerHTML = `🖥️ 返回【${activeGroup}】主監控看板 ❯`;
+    }
 
     await syncActiveStationsFromFlow(activeGroup);
     updateStationDropdown();

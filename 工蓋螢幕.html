@@ -117,8 +117,23 @@
       <option value="G10">G10</option>
       <option value="G11">G11</option>
       <option value="G12">G12</option>
+      <option value="G13">G13</option>
+      <option value="G14">G14</option>
+      <option value="G15">G15</option>
+      <option value="G16">G16</option>
+      <option value="G17">G17</option>
+      <option value="G18">G18</option>
+      <option value="G19">G19</option>
+      <option value="G20">G20</option>
       <option value="ALL">全部組別 (僅表格)</option>
     </select>
+    <span id="lockedGroupBadge" style="display:none; align-items:center; gap:4px; padding:6px 12px; font-size:14px; font-weight:800; border-radius:8px; background:#eff6ff; color:#1d4ed8; border:1px solid #93c5fd;" title="此網址已綁定專屬組別，防止誤切他組">
+      🔒 專屬組別：<span id="lockedGroupText">G01</span>
+    </span>
+
+    <a id="topGotoQrcodeBtn" href="qrcode.html" style="font-size:13px; font-weight:bold; color:#fff; background:#0284c7; padding:8px 14px; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 1px 3px rgba(0,0,0,0.1);" title="前往本組專屬 QR Code 桌牌與料號設定頁面">
+      🖨️ 前往【G02】QR Code 頁面 ❯
+    </a>
 
     <button id="loadBtn" class="btn-primary">🔄 手動重新整理</button>
     <button id="downloadBtn" disabled>📥 下載 CSV</button>
@@ -196,6 +211,9 @@
           <option value="5">5 秒</option>
         </select>
       </div>
+      <button id="groupLinksModalBtn" onclick="openGroupLinksModal()" style="display:none; padding:6px 12px; font-size:12px; font-weight:bold; border-radius:8px; border:1px solid #0284c7; background:#e0f2fe; color:#0369a1; cursor:pointer;" title="產生並複製 G01~G20 各組專屬工蓋螢幕與 QR Code 連結">
+        🔗 各組專屬網址清單
+      </button>
       <button id="changePinBtn" onclick="changeAdminPin()" style="display:none; padding:6px 10px; font-size:12px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; color:#475569; cursor:pointer;" title="變更管理員密碼">
         ⚙️ 改密碼
       </button>
@@ -413,6 +431,28 @@
     </div>
   </div>
 
+  <!-- 🔗 各組專屬網址清單與一鍵複製 Modal (管理員專用) -->
+  <div id="groupLinksModal" class="modal">
+    <div class="modal-content" style="max-width: 780px; max-height: 85vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0; color:#0f172a;">🔗 各組專屬「工蓋螢幕 ➔ QR Code」綁定網址清單 (G01 ~ G20)</h3>
+        <button onclick="closeGroupLinksModal()" style="padding:4px 10px; font-size:13px;">✕ 關閉</button>
+      </div>
+      <div style="font-size:13px; color:#334155; background:#f0f9ff; border:1px solid #bae6fd; padding:10px 12px; border-radius:8px; margin-bottom:12px; line-height:1.6;">
+        💡 <b>使用說明</b>：將下方專屬網址發給對應組別的學生後：<br>
+        1. 該組打開網址會<b>自動鎖定在自己的組別（如 G01）</b>，無法切換或誤改別組資料。<br>
+        2. 畫面上方提供<b>「🖨️ 前往【G01】QR Code 頁面 ❯」</b>按鈕，點擊即可直接進入該組專屬的 `qrcode.html?group=G01&lock=1`，並可隨時返回本組看板！
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:12px; color:#64748b;" id="currentSiteBaseHint"></span>
+        <button type="button" class="btn-primary" onclick="copyAllGroupLinks()" style="font-size:13px; padding:6px 14px;">
+          📋 一鍵複製全部 20 組專屬網址清單 (可貼至 Line / 教學平台)
+        </button>
+      </div>
+      <div id="groupLinksListContainer" style="display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+  </div>
+
 <script>
 const SUPABASE_URL = "https://fqbsrcbxtmagczykoesv.supabase.co";
 const SUPABASE_KEY = "sb_publishable_mn0CAB_nkrDycq6DS3Q2_g_-80SlWHB";
@@ -491,15 +531,23 @@ function getStationRaw(group, station, viewRound) {
   return { hasRaw: false, rawName: "", rawInit: "" };
 }
 
+// 🔒 若網址帶有 ?group=G01 (且未設定 lock=0)，自動鎖定為該組專屬看板模式，防止學生切換至他組
+let urlLockedGroup = null;
+
 window.addEventListener("load", () => {
   // 🌟 讀取上次記憶之組別 (優先順序: URL 參數 > localStorage > 預設 G02)
   const urlParams = new URLSearchParams(window.location.search);
   const paramGroup = (urlParams.get("group") || "").trim().toUpperCase();
+  const paramLock = (urlParams.get("lock") || "").trim();
   const savedGroup = localStorage.getItem("ie_chair_selected_group");
   const grpSelect = document.getElementById("groupSelect");
 
   if (paramGroup && Array.from(grpSelect.options).some(o => o.value === paramGroup)) {
     grpSelect.value = paramGroup;
+    localStorage.setItem("ie_chair_selected_group", paramGroup);
+    if (paramGroup !== "ALL" && paramLock !== "0") {
+      urlLockedGroup = paramGroup;
+    }
   } else if (savedGroup && Array.from(grpSelect.options).some(o => o.value === savedGroup)) {
     grpSelect.value = savedGroup;
   }
@@ -510,6 +558,10 @@ window.addEventListener("load", () => {
 });
 
 document.getElementById("groupSelect").onchange = function() {
+  if (urlLockedGroup && !isAdminLoggedIn) {
+    this.value = urlLockedGroup;
+    return;
+  }
   localStorage.setItem("ie_chair_selected_group", this.value);
   loadAll();
 };
@@ -1079,10 +1131,14 @@ function updateAdminUI() {
   const adminCooldownBox = document.getElementById("adminCooldownBox");
   const readonlyModeBadge = document.getElementById("readonlyModeBadge");
   const adminModeControls = document.getElementById("adminModeControls");
+  const groupLinksModalBtn = document.getElementById("groupLinksModalBtn");
   const changePinBtn = document.getElementById("changePinBtn");
   const openFlowEditorBtn = document.getElementById("openFlowEditorBtn");
   const deleteAllBtn = document.getElementById("deleteAllBtn");
   const editFlowInCardBtn = document.getElementById("editFlowInCardBtn");
+  const grpSelect = document.getElementById("groupSelect");
+  const lockedGrpBadge = document.getElementById("lockedGroupBadge");
+  const lockedGrpText = document.getElementById("lockedGroupText");
   const adminTh = document.querySelector("#dataTable thead th.admin-only");
   const adminTds = document.querySelectorAll("#dataTable tbody td.admin-only");
 
@@ -1093,9 +1149,12 @@ function updateAdminUI() {
       adminToggleBtn.style.color = "#1d4ed8";
       adminToggleBtn.style.borderColor = "#93c5fd";
     }
+    if (grpSelect) grpSelect.style.display = "inline-block";
+    if (lockedGrpBadge) lockedGrpBadge.style.display = "none";
     if (readonlyModeBadge) readonlyModeBadge.style.display = "none";
     if (adminModeControls) adminModeControls.style.display = "inline-flex";
     if (adminCooldownBox) adminCooldownBox.style.display = "inline-flex";
+    if (groupLinksModalBtn) groupLinksModalBtn.style.display = "inline-flex";
     if (changePinBtn) changePinBtn.style.display = "inline-flex";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "inline-flex";
     if (deleteAllBtn) deleteAllBtn.style.display = "inline-flex";
@@ -1109,9 +1168,21 @@ function updateAdminUI() {
       adminToggleBtn.style.color = "#334155";
       adminToggleBtn.style.borderColor = "#cbd5e1";
     }
+    if (urlLockedGroup) {
+      if (grpSelect) {
+        grpSelect.value = urlLockedGroup;
+        grpSelect.style.display = "none";
+      }
+      if (lockedGrpText) lockedGrpText.textContent = urlLockedGroup;
+      if (lockedGrpBadge) lockedGrpBadge.style.display = "inline-flex";
+    } else {
+      if (grpSelect) grpSelect.style.display = "inline-block";
+      if (lockedGrpBadge) lockedGrpBadge.style.display = "none";
+    }
     if (readonlyModeBadge) readonlyModeBadge.style.display = "inline-flex";
     if (adminModeControls) adminModeControls.style.display = "none";
     if (adminCooldownBox) adminCooldownBox.style.display = "none";
+    if (groupLinksModalBtn) groupLinksModalBtn.style.display = "none";
     if (changePinBtn) changePinBtn.style.display = "none";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "none";
     if (deleteAllBtn) deleteAllBtn.style.display = "none";
@@ -1120,6 +1191,68 @@ function updateAdminUI() {
     adminTds.forEach(td => td.style.display = "none");
   }
   updateModeButtonsUI();
+}
+
+function getSiteDirBaseUrl() {
+  try {
+    const loc = window.location.href.split("?")[0].split("#")[0];
+    if (loc.startsWith("http://") || loc.startsWith("https://")) {
+      return loc.substring(0, loc.lastIndexOf("/") + 1);
+    }
+  } catch (e) {}
+  return "https://mrjohnny461-png.github.io/qr/";
+}
+
+function openGroupLinksModal() {
+  const modal = document.getElementById("groupLinksModal");
+  const container = document.getElementById("groupLinksListContainer");
+  const baseHint = document.getElementById("currentSiteBaseHint");
+  if (!modal || !container) return;
+
+  const baseDir = getSiteDirBaseUrl();
+  if (baseHint) {
+    baseHint.innerHTML = `🌐 目前網站根目錄：<code>${baseDir}</code>`;
+  }
+  container.innerHTML = "";
+  for (let i = 1; i <= 20; i++) {
+    const g = `G${String(i).padStart(2, "0")}`;
+    const screenUrl = `${baseDir}工蓋螢幕.html?group=${g}&lock=1`;
+    const qrUrl = `${baseDir}qrcode.html?group=${g}&lock=1`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; flex-wrap:wrap; font-size:13px;";
+    row.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:260px;">
+        <span style="font-weight:800; color:#1d4ed8; background:#eff6ff; padding:3px 8px; border-radius:6px; border:1px solid #bfdbfe;">${g}</span>
+        <input type="text" readonly value="${screenUrl}" style="flex:1; padding:4px 8px; font-size:12px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#334155;" onclick="this.select()">
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button type="button" onclick="navigator.clipboard.writeText('${screenUrl}').then(() => alert('✓ 已複製【${g}】專屬工蓋螢幕網址！'))" style="padding:4px 10px; font-size:12px; font-weight:bold; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;">📋 複製看板網址</button>
+        <a href="${qrUrl}" target="_blank" style="padding:4px 10px; font-size:12px; font-weight:bold; background:#eff6ff; color:#0284c7; border:1px solid #bae6fd; border-radius:6px; text-decoration:none;">🖨️ ${g} QR頁 ❯</a>
+      </div>
+    `;
+    container.appendChild(row);
+  }
+  modal.style.display = "block";
+}
+
+function closeGroupLinksModal() {
+  const modal = document.getElementById("groupLinksModal");
+  if (modal) modal.style.display = "none";
+}
+
+function copyAllGroupLinks() {
+  const baseDir = getSiteDirBaseUrl();
+  const lines = ["【IE Chair 各組專屬工蓋螢幕監控網址 (內附前往該組 QR Code 連結)】"];
+  for (let i = 1; i <= 20; i++) {
+    const g = `G${String(i).padStart(2, "0")}`;
+    lines.push(`${g} 專屬看板：${baseDir}工蓋螢幕.html?group=${g}&lock=1`);
+  }
+  const text = lines.join("\n");
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      alert("✓ 已複製 G01 ~ G20 全部 20 組專屬網址清單！可直接貼上至 Line 群組或教學平台。");
+    });
+  }
 }
 
 function resetAutoLock() {
@@ -1399,20 +1532,30 @@ async function loadAll() {
     if (group !== "ALL") {
       const viewRound = getEffectiveViewRound();
       const roundParam = viewRound.mode === "OFFICIAL" ? "OFFICIAL" : String(viewRound.round || currentTestRound);
+      const lockSuffix = urlLockedGroup ? "&lock=1" : "";
+      const targetQrHref = `qrcode.html?group=${encodeURIComponent(group)}&round=${encodeURIComponent(roundParam)}${lockSuffix}`;
       document.getElementById("flowCard").style.display = "block";
       const flowGrpBadge = document.getElementById("flowGroupTitleBadge");
       if (flowGrpBadge) flowGrpBadge.textContent = `【${group}】`;
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) {
-        gotoBtn.href = `qrcode.html?group=${encodeURIComponent(group)}&round=${encodeURIComponent(roundParam)}`;
+        gotoBtn.href = targetQrHref;
         gotoBtn.innerHTML = `🖨️ 前往【${group} - ${viewRound.label}】QR Code 桌牌與料號設定 ❯`;
         gotoBtn.style.display = "inline-flex";
+      }
+      const topGotoBtn = document.getElementById("topGotoQrcodeBtn");
+      if (topGotoBtn) {
+        topGotoBtn.href = targetQrHref;
+        topGotoBtn.innerHTML = `🖨️ 前往【${group}】QR Code 頁面 ❯`;
+        topGotoBtn.style.display = "inline-flex";
       }
       await renderFlowDiagram(group);
     } else {
       document.getElementById("flowCard").style.display = "none";
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) gotoBtn.style.display = "none";
+      const topGotoBtn = document.getElementById("topGotoQrcodeBtn");
+      if (topGotoBtn) topGotoBtn.style.display = "none";
     }
 
     showTable(currentEvents);

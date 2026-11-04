@@ -127,7 +127,10 @@
       <option value="G20">G20</option>
       <option value="ALL">全部組別 (僅表格)</option>
     </select>
-    <span id="lockedGroupBadge" style="display:none; align-items:center; gap:4px; padding:6px 12px; font-size:14px; font-weight:800; border-radius:8px; background:#eff6ff; color:#1d4ed8; border:1px solid #93c5fd;" title="此網址已綁定專屬組別，防止誤切他組">
+    <button id="bindGroupUrlBtn" type="button" onclick="bindCurrentGroupUrl()" style="padding:6px 10px; font-size:12px; font-weight:bold; border-radius:8px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;" title="將此視窗與網址永久鎖定為目前選取的組別（鎖定後即使解鎖管理員也無法切換組別）">
+      📌 鎖定此組別
+    </button>
+    <span id="lockedGroupBadge" style="display:none; align-items:center; gap:4px; padding:6px 12px; font-size:14px; font-weight:800; border-radius:8px; background:#eff6ff; color:#1d4ed8; border:1px solid #93c5fd; user-select:none;" title="此專屬網址已永久綁定該組別，即使解鎖管理員亦不可切換至其他組別">
       🔒 專屬組別：<span id="lockedGroupText">G01</span>
     </span>
 
@@ -531,7 +534,7 @@ function getStationRaw(group, station, viewRound) {
   return { hasRaw: false, rawName: "", rawInit: "" };
 }
 
-// 🔒 若網址帶有 ?group=G01 (且未設定 lock=0)，自動鎖定為該組專屬看板模式，防止學生切換至他組
+// 🔒 若網址帶有 ?group=G01 (且未設定 lock=0)，永久鎖定為該組專屬看板模式（即使解鎖管理員依然不可更改組別）
 let urlLockedGroup = null;
 
 window.addEventListener("load", () => {
@@ -547,6 +550,7 @@ window.addEventListener("load", () => {
     localStorage.setItem("ie_chair_selected_group", paramGroup);
     if (paramGroup !== "ALL" && paramLock !== "0") {
       urlLockedGroup = paramGroup;
+      grpSelect.disabled = true;
     }
   } else if (savedGroup && Array.from(grpSelect.options).some(o => o.value === savedGroup)) {
     grpSelect.value = savedGroup;
@@ -558,7 +562,8 @@ window.addEventListener("load", () => {
 });
 
 document.getElementById("groupSelect").onchange = function() {
-  if (urlLockedGroup && !isAdminLoggedIn) {
+  // 🛡️ 只要是專屬組別網址，無論是否解鎖管理員，一律禁止切換組別
+  if (urlLockedGroup) {
     this.value = urlLockedGroup;
     return;
   }
@@ -1126,6 +1131,25 @@ function getAdminPin() {
   return localStorage.getItem(ADMIN_PIN_KEY) || DEFAULT_PIN;
 }
 
+function bindCurrentGroupUrl() {
+  const grpSelect = document.getElementById("groupSelect");
+  const grp = grpSelect ? grpSelect.value : "G01";
+  if (!grp || grp === "ALL") {
+    alert("請先選擇單一組別（如 G01 ~ G20）再執行組別鎖定！");
+    return;
+  }
+  urlLockedGroup = grp;
+  if (grpSelect) grpSelect.disabled = true;
+  localStorage.setItem("ie_chair_selected_group", grp);
+  try {
+    const newUrl = `${window.location.pathname}?group=${encodeURIComponent(grp)}&lock=1`;
+    window.history.replaceState({}, "", newUrl);
+  } catch (e) {}
+  updateAdminUI();
+  loadAll();
+  alert(`🔒 已將此頁面與網址永久綁定為【${grp}】專屬看板！\n\n綁定後即使解鎖管理員權限，依然無法切換至其他組別，徹底防止誤改或誤刪別組資料。`);
+}
+
 function updateAdminUI() {
   const adminToggleBtn = document.getElementById("adminToggleBtn");
   const adminCooldownBox = document.getElementById("adminCooldownBox");
@@ -1137,10 +1161,30 @@ function updateAdminUI() {
   const deleteAllBtn = document.getElementById("deleteAllBtn");
   const editFlowInCardBtn = document.getElementById("editFlowInCardBtn");
   const grpSelect = document.getElementById("groupSelect");
+  const bindGrpBtn = document.getElementById("bindGroupUrlBtn");
   const lockedGrpBadge = document.getElementById("lockedGroupBadge");
   const lockedGrpText = document.getElementById("lockedGroupText");
   const adminTh = document.querySelector("#dataTable thead th.admin-only");
   const adminTds = document.querySelectorAll("#dataTable tbody td.admin-only");
+
+  // 🛡️ 無論是否解鎖管理員，只要處於組別綁定模式 (urlLockedGroup)，一律強制鎖死組別不可更改！
+  if (urlLockedGroup) {
+    if (grpSelect) {
+      grpSelect.value = urlLockedGroup;
+      grpSelect.disabled = true;
+      grpSelect.style.display = "none";
+    }
+    if (bindGrpBtn) bindGrpBtn.style.display = "none";
+    if (lockedGrpText) lockedGrpText.textContent = urlLockedGroup;
+    if (lockedGrpBadge) lockedGrpBadge.style.display = "inline-flex";
+  } else {
+    if (grpSelect) {
+      grpSelect.disabled = false;
+      grpSelect.style.display = "inline-block";
+    }
+    if (bindGrpBtn) bindGrpBtn.style.display = "inline-flex";
+    if (lockedGrpBadge) lockedGrpBadge.style.display = "none";
+  }
 
   if (isAdminLoggedIn) {
     if (adminToggleBtn) {
@@ -1149,13 +1193,11 @@ function updateAdminUI() {
       adminToggleBtn.style.color = "#1d4ed8";
       adminToggleBtn.style.borderColor = "#93c5fd";
     }
-    if (grpSelect) grpSelect.style.display = "inline-block";
-    if (lockedGrpBadge) lockedGrpBadge.style.display = "none";
     if (readonlyModeBadge) readonlyModeBadge.style.display = "none";
     if (adminModeControls) adminModeControls.style.display = "inline-flex";
     if (adminCooldownBox) adminCooldownBox.style.display = "inline-flex";
-    if (groupLinksModalBtn) groupLinksModalBtn.style.display = "inline-flex";
-    if (changePinBtn) changePinBtn.style.display = "inline-flex";
+    if (groupLinksModalBtn) groupLinksModalBtn.style.display = urlLockedGroup ? "none" : "inline-flex";
+    if (changePinBtn) changePinBtn.style.display = urlLockedGroup ? "none" : "inline-flex";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "inline-flex";
     if (deleteAllBtn) deleteAllBtn.style.display = "inline-flex";
     if (editFlowInCardBtn) editFlowInCardBtn.style.display = "inline-flex";
@@ -1167,17 +1209,6 @@ function updateAdminUI() {
       adminToggleBtn.style.background = "#f8fafc";
       adminToggleBtn.style.color = "#334155";
       adminToggleBtn.style.borderColor = "#cbd5e1";
-    }
-    if (urlLockedGroup) {
-      if (grpSelect) {
-        grpSelect.value = urlLockedGroup;
-        grpSelect.style.display = "none";
-      }
-      if (lockedGrpText) lockedGrpText.textContent = urlLockedGroup;
-      if (lockedGrpBadge) lockedGrpBadge.style.display = "inline-flex";
-    } else {
-      if (grpSelect) grpSelect.style.display = "inline-block";
-      if (lockedGrpBadge) lockedGrpBadge.style.display = "none";
     }
     if (readonlyModeBadge) readonlyModeBadge.style.display = "inline-flex";
     if (adminModeControls) adminModeControls.style.display = "none";
@@ -1486,7 +1517,11 @@ function getStationFlowInfoForEvent(row) {
 
 // 核心讀取與渲染
 async function loadAll() {
-  const group = document.getElementById("groupSelect").value;
+  const grpSelectEl = document.getElementById("groupSelect");
+  if (urlLockedGroup && grpSelectEl) {
+    grpSelectEl.value = urlLockedGroup;
+  }
+  const group = urlLockedGroup || (grpSelectEl ? grpSelectEl.value : "G02");
 
   try {
     // 依照開工時間由最早至最新排序 (正序，符合生產流動時間序)

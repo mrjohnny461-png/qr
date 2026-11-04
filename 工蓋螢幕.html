@@ -224,6 +224,7 @@
         🛠️ 自訂本組工站順序
       </button>
       <button id="deleteAllBtn" class="btn-danger" style="display:none;">🗑️ 清空紀錄與庫存歸零</button>
+      <button id="deleteEntireGroupBtn" class="btn-danger" style="display:none; background:#991b1b; border:1px solid #7f1d1d;" title="徹底刪除此組別在所有測試場次(第1~10次)與正式實作的全部計時紀錄，並將庫存歸零">💥 刪除本組全部場次數據</button>
     </div>
     <span id="status">即時更新中</span>
   </div>
@@ -1044,6 +1045,12 @@ function updateFlowViewRoundUI() {
   if (delBtn) {
     delBtn.textContent = `🗑️ 清空本組【${viewRound.label}】紀錄與庫存`;
   }
+  const delGroupBtn = document.getElementById("deleteEntireGroupBtn");
+  if (delGroupBtn) {
+    const grp = urlLockedGroup || (document.getElementById("groupSelect") ? document.getElementById("groupSelect").value : "");
+    const grpLabel = (!grp || grp === "ALL") ? "本組" : `【${grp}】`;
+    delGroupBtn.textContent = `💥 刪除${grpLabel}全部場次數據`;
+  }
 }
 
 function onFlowViewRoundChange(val) {
@@ -1159,6 +1166,7 @@ function updateAdminUI() {
   const changePinBtn = document.getElementById("changePinBtn");
   const openFlowEditorBtn = document.getElementById("openFlowEditorBtn");
   const deleteAllBtn = document.getElementById("deleteAllBtn");
+  const deleteEntireGroupBtn = document.getElementById("deleteEntireGroupBtn");
   const editFlowInCardBtn = document.getElementById("editFlowInCardBtn");
   const grpSelect = document.getElementById("groupSelect");
   const bindGrpBtn = document.getElementById("bindGroupUrlBtn");
@@ -1200,6 +1208,7 @@ function updateAdminUI() {
     if (changePinBtn) changePinBtn.style.display = urlLockedGroup ? "none" : "inline-flex";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "inline-flex";
     if (deleteAllBtn) deleteAllBtn.style.display = "inline-flex";
+    if (deleteEntireGroupBtn) deleteEntireGroupBtn.style.display = "inline-flex";
     if (editFlowInCardBtn) editFlowInCardBtn.style.display = "inline-flex";
     if (adminTh) adminTh.style.display = "";
     adminTds.forEach(td => td.style.display = "");
@@ -1217,6 +1226,7 @@ function updateAdminUI() {
     if (changePinBtn) changePinBtn.style.display = "none";
     if (openFlowEditorBtn) openFlowEditorBtn.style.display = "none";
     if (deleteAllBtn) deleteAllBtn.style.display = "none";
+    if (deleteEntireGroupBtn) deleteEntireGroupBtn.style.display = "none";
     if (editFlowInCardBtn) editFlowInCardBtn.style.display = "none";
     if (adminTh) adminTh.style.display = "none";
     adminTds.forEach(td => td.style.display = "none");
@@ -1383,6 +1393,57 @@ document.getElementById("deleteAllBtn").onclick = async () => {
     loadAll();
   } catch (err) {
     alert("清空重置失敗：" + err.message);
+  }
+};
+
+// 💥 徹底刪除該組別「全部場次 (第 1~10 次測試 + 正式實作)」的所有計時紀錄與重置 WIP
+document.getElementById("deleteEntireGroupBtn").onclick = async () => {
+  if (!isAdminLoggedIn) {
+    alert("⚠️ 權限不足：現場看板模式下禁止執行刪除操作！請先解鎖管理員。");
+    return;
+  }
+  resetAutoLock();
+
+  const group = urlLockedGroup || document.getElementById("groupSelect").value;
+  if (!group || group === "ALL") {
+    alert("請先選擇特定的單一組別（例如 G01 ~ G20）再執行整組刪除！");
+    return;
+  }
+
+  const ok = confirm(`🚨 確定要徹底刪除【${group}】在「所有測試場次 (第 1~10 次測試) 與正式實作」的全部計時紀錄，並將本組工站庫存歸零重置嗎？\n\n⚠️ 注意：此操作會將【${group}】的所有場次歷史紀錄一次清空，但不會影響其他組別！`);
+  if (!ok) return;
+
+  try {
+    document.getElementById("status").textContent = `正在徹底刪除【${group}】全部場次數據中...`;
+
+    // 1. 先從目前記憶體中的 currentEvents 找出屬於該組的所有紀錄 ID 並精準刪除
+    const targetIds = (currentEvents || [])
+      .filter(r => r && r.group_id === group && r.id)
+      .map(r => r.id);
+    if (targetIds.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/event?id=in.(${targetIds.join(",")})`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+    }
+
+    // 2. 再向雲端直接刪除 group_id 等於該組的所有 event 紀錄（涵蓋第 1~10 次測試與正式實作）
+    await fetch(`${SUPABASE_URL}/rest/v1/event?group_id=eq.${encodeURIComponent(group)}`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    });
+
+    // 3. 重置該組的 station_wip 在製品庫存（回到目前檢視場次設定之初始備料，並排除 SYSTEM_MODE）
+    const viewRound = getEffectiveViewRound();
+    await resetGroupWipForNewRound(group, viewRound);
+
+    // 4. 確保刪除不會把 SYSTEM_MODE 的全線測試次數洗掉
+    await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
+
+    alert(`✓ 已徹底清空【${group}】所有測試場次與正式實作的全部計時數據，並將庫存歸零重置！`);
+    loadAll();
+  } catch (err) {
+    alert("刪除整組數據失敗：" + err.message);
   }
 };
 

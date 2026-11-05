@@ -569,6 +569,12 @@ document.getElementById("groupSelect").onchange = function() {
     return;
   }
   localStorage.setItem("ie_chair_selected_group", this.value);
+  lastLocalModeChangeAt = 0; // 切換組別時立即讀取該組獨立的測試場次進度
+  const savedGrpMode = localStorage.getItem(`ie_chair_system_mode_${this.value}`);
+  const savedGrpRound = localStorage.getItem(`ie_chair_test_round_${this.value}`);
+  if (savedGrpMode !== null) currentSystemMode = parseInt(savedGrpMode, 10) || 0;
+  if (savedGrpRound !== null) currentTestRound = Math.min(10, Math.max(1, parseInt(savedGrpRound, 10) || 1));
+  updateModeButtonsUI();
   loadAll();
 };
 document.getElementById("loadBtn").onclick = loadAll;
@@ -729,16 +735,50 @@ function updateModeButtonsUI() {
   }
 }
 
-// 雲端 SYSTEM_MODE 安全寫入 (若尚無 SYSTEM_MODE 紀錄則自動新增，確保跨裝置 100% 同步)
-async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal) {
+// 雲端模式安全寫入：各組獨立進度 (GROUP_MODE) 優先，讓 G01 測第 1 次、G02 測第 10 次完全互不干擾；若為 ALL 則寫入 SYSTEM_MODE
+async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal, targetGroup) {
   try {
     const inVal = encodeSystemModeInput(modeVal, roundVal);
     const outVal = encodeSystemCooldownOutput(startCdVal, finishCdVal);
+    const grpSelectEl = document.getElementById("groupSelect");
+    const grp = targetGroup || urlLockedGroup || (grpSelectEl ? grpSelectEl.value : "ALL");
+
+    // 1. 單一組別模式 (G01 ~ G20)：寫入該組專屬的 GROUP_MODE，完全不影響其他組別的測試進度
+    if (grp && grp !== "ALL") {
+      try {
+        localStorage.setItem(`ie_chair_system_mode_${grp}`, String(modeVal));
+        localStorage.setItem(`ie_chair_test_round_${grp}`, String(roundVal));
+      } catch (e) {}
+      const checkGrpRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(grp)}&station_id=eq.GROUP_MODE&select=id`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const existingGrp = await checkGrpRes.json();
+      if (Array.isArray(existingGrp) && existingGrp.length > 0) {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(grp)}&station_id=eq.GROUP_MODE`,
+          {
+            method: "PATCH",
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
+          }
+        );
+      } else {
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+          method: "POST",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ group_id: grp, station_id: "GROUP_MODE", input_wip: inVal, output_wip: outVal })
+        });
+      }
+      return;
+    }
+
+    // 2. 全組總覽模式 (ALL)：寫入全域預設 SYSTEM_MODE
     const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=id`, {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     });
     const existing = await checkRes.json();
-    if (existing && existing.length > 0) {
+    if (Array.isArray(existing) && existing.length > 0) {
       await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
         method: "PATCH",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
@@ -754,11 +794,11 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal)
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE)
+// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE 與 GROUP_MODE)
 async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=neq.SYSTEM_MODE`, {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
       method: "PATCH",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
@@ -807,7 +847,8 @@ async function confirmTestRound() {
 
   isSwitchingModeOrRound = true;
   try {
-    const ok = confirm(`🧪 確定要切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，各工站手機與 QR Code 頁面將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」。\n• 本組在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
+    const scopeLabel = (group && group !== "ALL") ? `本組【${group}】` : "全班預設";
+    const ok = confirm(`🧪 確定要將${scopeLabel}切換並確認為【第 ${selectedRound} 次測試】嗎？\n\n• 確認後，${scopeLabel}的各工站手機與 QR Code 頁面將同步切換至「第 ${selectedRound} 次測試 (TEST${selectedRound}-P01...)」，其他組別的測試進度完全不受影響！\n• ${scopeLabel}在製品庫存將自動歸零並恢復初始備料，讓第 ${selectedRound} 次測試從 0 開始計時（先前各次測試的歷史紀錄均完整保留）！`);
     if (!ok) {
       pendingSelectedTestRound = null;
       if (roundSelect) roundSelect.value = String(currentTestRound);
@@ -820,19 +861,23 @@ async function confirmTestRound() {
     lastLocalModeChangeAt = Date.now();
     localStorage.setItem("ie_chair_system_mode", "0");
     localStorage.setItem("ie_chair_test_round", String(selectedRound));
+    if (group && group !== "ALL") {
+      localStorage.setItem(`ie_chair_system_mode_${group}`, "0");
+      localStorage.setItem(`ie_chair_test_round_${group}`, String(selectedRound));
+    }
     if (roundSelect) roundSelect.value = String(selectedRound);
     updateModeButtonsUI();
 
-    // 1. 先立即寫入雲端 SYSTEM_MODE，確保 selectedRound 不會被背景輪詢覆蓋
-    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec);
+    // 1. 先立即寫入雲端該組專屬 GROUP_MODE (或全域 SYSTEM_MODE)，確保 selectedRound 不會被背景輪詢覆蓋
+    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec, group);
 
-    // 2. 重置該組別的工站在製品庫存（排除 SYSTEM_MODE）
+    // 2. 重置該組別的工站在製品庫存（排除 SYSTEM_MODE 與 GROUP_MODE）
     if (group !== "ALL") {
       await resetGroupWipForNewRound(group);
     }
 
-    // 3. 再次確保雲端 SYSTEM_MODE 鎖定為 selectedRound
-    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec);
+    // 3. 再次確保雲端鎖定為 selectedRound
+    await upsertSystemModeCloud(0, selectedRound, currentCooldownSec, currentFinishCooldownSec, group);
     lastLocalModeChangeAt = Date.now();
 
     // 自動將下方表格篩選與流程圖檢視切至該次測試，方便即時確認該次測試資料
@@ -842,7 +887,7 @@ async function confirmTestRound() {
       setTestRoundTableFilter(String(selectedRound));
     }
 
-    alert(`✓ 已確認切換為【🧪 第 ${selectedRound} 次測試】！各工站手機與在製品庫存已同步就緒。`);
+    alert(`✓ 已將${scopeLabel}確認切換為【🧪 第 ${selectedRound} 次測試】！（其他組別進度獨立不受影響）`);
   } finally {
     isSwitchingModeOrRound = false;
   }
@@ -857,10 +902,11 @@ async function changeSystemMode(newMode) {
   resetAutoLock();
 
   const group = document.getElementById("groupSelect").value;
+  const scopeLabel = (group && group !== "ALL") ? `本組【${group}】` : "全班預設";
   isSwitchingModeOrRound = true;
   try {
     if (newMode === 1) {
-      const ok = confirm("⚠️ 即將切換至【🏆 正式實作評分模式】！\n\n現場各工站手機將同步切入正式計分實作。\n建議點擊「確定」自動將當前在製品庫存歸零並恢復初始備料起跑（測試數據將完整保留，不受影響）；點擊「取消」保留目前在庫。");
+      const ok = confirm(`⚠️ 即將把${scopeLabel}切換至【🏆 正式實作評分模式】！\n\n${scopeLabel}各工站手機將同步切入正式計分實作（其他組別進度不受影響）。\n建議點擊「確定」自動將當前在製品庫存歸零並恢復初始備料起跑（測試數據將完整保留）；點擊「取消」保留目前在庫。`);
       if (ok && group !== "ALL") {
         await resetGroupWipForNewRound(group);
       }
@@ -877,13 +923,17 @@ async function changeSystemMode(newMode) {
     lastLocalModeChangeAt = Date.now();
     localStorage.setItem("ie_chair_system_mode", newMode);
     localStorage.setItem("ie_chair_test_round", String(currentTestRound));
+    if (group && group !== "ALL") {
+      localStorage.setItem(`ie_chair_system_mode_${group}`, String(newMode));
+      localStorage.setItem(`ie_chair_test_round_${group}`, String(currentTestRound));
+    }
     updateModeButtonsUI();
 
-    // 同步更新雲端 station_wip SYSTEM_MODE
-    await upsertSystemModeCloud(newMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
+    // 同步更新雲端該組專屬 GROUP_MODE (或全域 SYSTEM_MODE)
+    await upsertSystemModeCloud(newMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec, group);
     lastLocalModeChangeAt = Date.now();
 
-    alert(`✓ 已成功切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : `🧪 測試練習 (第 ${currentTestRound} 次測試)`}】！現場手機端已同步。`);
+    alert(`✓ 已將${scopeLabel}切換為【${newMode === 1 ? '🏆 正式實作 (評分)' : `🧪 測試練習 (第 ${currentTestRound} 次測試)`}】！`);
   } finally {
     isSwitchingModeOrRound = false;
   }
@@ -1605,18 +1655,33 @@ async function loadAll() {
 
     try {
       if (!isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
-        const modeRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`, {
+        // 優先讀取該組專屬的 GROUP_MODE (支援各組獨立測試進度：如 G01 測第 1 次、G02 測第 10 次)，若尚無則回退讀取 SYSTEM_MODE
+        const modeQuery = (group && group !== "ALL")
+          ? `${SUPABASE_URL}/rest/v1/station_wip?or=(and(group_id.eq.${encodeURIComponent(group)},station_id.eq.GROUP_MODE),station_id.eq.SYSTEM_MODE)`
+          : `${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE`;
+        const modeRes = await fetch(modeQuery, {
           headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
         });
         const modeRows = await modeRes.json();
         if (Array.isArray(modeRows) && modeRows.length > 0 && !isSwitchingModeOrRound && (Date.now() - lastLocalModeChangeAt) > 5000) {
-          const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
-          currentSystemMode = decodedMode.mode;
-          currentTestRound = decodedMode.round;
-          const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
-          currentCooldownSec = decodedCd.startCd;
-          currentFinishCooldownSec = decodedCd.finishCd;
-          updateModeButtonsUI();
+          const targetRow = (group && group !== "ALL")
+            ? (modeRows.find(r => r.group_id === group && r.station_id === "GROUP_MODE") || modeRows.find(r => r.station_id === "SYSTEM_MODE"))
+            : modeRows.find(r => r.station_id === "SYSTEM_MODE");
+          if (targetRow) {
+            const decodedMode = decodeSystemModeInput(targetRow.input_wip);
+            currentSystemMode = decodedMode.mode;
+            currentTestRound = decodedMode.round;
+            const decodedCd = decodeSystemCooldownOutput(targetRow.output_wip);
+            currentCooldownSec = decodedCd.startCd;
+            currentFinishCooldownSec = decodedCd.finishCd;
+            if (group && group !== "ALL") {
+              try {
+                localStorage.setItem(`ie_chair_system_mode_${group}`, String(currentSystemMode));
+                localStorage.setItem(`ie_chair_test_round_${group}`, String(currentTestRound));
+              } catch (e) {}
+            }
+            updateModeButtonsUI();
+          }
         }
       } else {
         updateModeButtonsUI();
@@ -1729,7 +1794,7 @@ async function renderFlowDiagram(group) {
 
   // 確保每個上線工站在該檢視場次都有獨立且精準的完工數 (outWip)，讓第 1~10 次測試流程圖成績完全獨立互不影響
   stationSet.forEach(stId => {
-    if (stId === "SYSTEM_MODE") return;
+    if (stId === "SYSTEM_MODE" || stId === "GROUP_MODE") return;
     if (!wipMap[stId]) {
       wipMap[stId] = { inWip: 0, outWip: roundOutMap[stId] || 0 };
     } else {
@@ -1741,7 +1806,7 @@ async function renderFlowDiagram(group) {
   const styles = [];
 
   stationSet.forEach(stId => {
-    if (stId === "SYSTEM_MODE") return;
+    if (stId === "SYSTEM_MODE" || stId === "GROUP_MODE") return;
     const w = wipMap[stId] || { inWip: 0, outWip: 0 };
     const rawCfg = getStationRaw(group, stId, viewRound);
     const hasRaw = !!rawCfg.hasRaw;

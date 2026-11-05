@@ -685,20 +685,24 @@ function getCurrentFlowKey() {
 async function init() {
   showMsg("同步全產線物料關係與歷史資料...", "#64748b");
   try {
-    // 先同步雲端 SYSTEM_MODE，確保一開始就讀取到正確的第 N 次測試專屬流程圖
+    // 先同步雲端本組專屬 GROUP_MODE (支援各組獨立測試進度：如 G01 測第 1 次、G02 測第 10 次)，若無則回退讀取 SYSTEM_MODE
     try {
       const modeRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=input_wip,output_wip`,
+        `${SUPABASE_URL}/rest/v1/station_wip?or=(and(group_id.eq.${encodeURIComponent(groupId)},station_id.eq.GROUP_MODE),station_id.eq.SYSTEM_MODE)&select=group_id,station_id,input_wip,output_wip`,
         { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
       );
       const modeRows = await modeRes.json();
       if (Array.isArray(modeRows) && modeRows.length > 0) {
-        const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
-        currentSystemMode = decodedMode.mode;
-        currentTestRound = decodedMode.round;
-        const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
-        currentCooldownSec = decodedCd.startCd;
-        currentFinishCooldownSec = decodedCd.finishCd;
+        const targetRow = modeRows.find(r => r.group_id === groupId && r.station_id === "GROUP_MODE") ||
+                          modeRows.find(r => r.station_id === "SYSTEM_MODE");
+        if (targetRow) {
+          const decodedMode = decodeSystemModeInput(targetRow.input_wip);
+          currentSystemMode = decodedMode.mode;
+          currentTestRound = decodedMode.round;
+          const decodedCd = decodeSystemCooldownOutput(targetRow.output_wip);
+          currentCooldownSec = decodedCd.startCd;
+          currentFinishCooldownSec = decodedCd.finishCd;
+        }
       }
     } catch (e) {}
 
@@ -1202,32 +1206,39 @@ async function autoSyncLive() {
   if (!wipRecordId) return;
 
   try {
-    // 1. 同步雲端全域實作模式 (TEST / OFFICIAL) 與防呆秒數 (1~5s)
+    // 1. 同步雲端本組專屬實作模式 GROUP_MODE (或全域 SYSTEM_MODE) 與防呆秒數 (1~5s)
     try {
       const modeRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=input_wip,output_wip`,
+        `${SUPABASE_URL}/rest/v1/station_wip?or=(and(group_id.eq.${encodeURIComponent(groupId)},station_id.eq.GROUP_MODE),station_id.eq.SYSTEM_MODE)&select=group_id,station_id,input_wip,output_wip`,
         { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
       );
       const modeRows = await modeRes.json();
-      if (modeRows && modeRows.length > 0) {
-        const decodedMode = decodeSystemModeInput(modeRows[0].input_wip);
-        const decodedCd = decodeSystemCooldownOutput(modeRows[0].output_wip);
-        if (decodedMode.mode !== currentSystemMode || decodedMode.round !== currentTestRound) {
-          currentSystemMode = decodedMode.mode;
-          currentTestRound = decodedMode.round;
-          try { localStorage.setItem("ie_chair_test_round", String(currentTestRound)); } catch(e) {}
-          updateModeBadgeUI();
-          await updateFlowInfo();
-          if (!isWorking) await syncHistoryFromDb();
-        }
-        if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec) {
-          currentCooldownSec = decodedCd.startCd;
-          currentFinishCooldownSec = decodedCd.finishCd;
-          try {
-            localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
-            localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
-          } catch(e) {}
-          updateCooldownBadgeUI();
+      if (Array.isArray(modeRows) && modeRows.length > 0) {
+        const targetRow = modeRows.find(r => r.group_id === groupId && r.station_id === "GROUP_MODE") ||
+                          modeRows.find(r => r.station_id === "SYSTEM_MODE");
+        if (targetRow) {
+          const decodedMode = decodeSystemModeInput(targetRow.input_wip);
+          const decodedCd = decodeSystemCooldownOutput(targetRow.output_wip);
+          if (decodedMode.mode !== currentSystemMode || decodedMode.round !== currentTestRound) {
+            currentSystemMode = decodedMode.mode;
+            currentTestRound = decodedMode.round;
+            try {
+              localStorage.setItem("ie_chair_test_round", String(currentTestRound));
+              localStorage.setItem(`ie_chair_test_round_${groupId}`, String(currentTestRound));
+            } catch(e) {}
+            updateModeBadgeUI();
+            await updateFlowInfo();
+            if (!isWorking) await syncHistoryFromDb();
+          }
+          if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec) {
+            currentCooldownSec = decodedCd.startCd;
+            currentFinishCooldownSec = decodedCd.finishCd;
+            try {
+              localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
+              localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
+            } catch(e) {}
+            updateCooldownBadgeUI();
+          }
         }
       }
     } catch(e) {}

@@ -400,10 +400,11 @@
   let hasCompletedInitialModeSync = false;
   async function syncQrSystemMode() {
     try {
+      const grp = groupSelect.value || activeGroup || "G02";
       const prevMode = qrCurrentSystemMode;
       const prevRound = qrCurrentTestRound;
-      const localMode = localStorage.getItem("ie_chair_system_mode");
-      const localRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1;
+      const localMode = localStorage.getItem(`ie_chair_system_mode_${grp}`) ?? localStorage.getItem("ie_chair_system_mode");
+      const localRound = parseInt(localStorage.getItem(`ie_chair_test_round_${grp}`) || localStorage.getItem("ie_chair_test_round") || "1", 10) || 1;
       if (localMode === "1") {
         qrCurrentSystemMode = "OFFICIAL";
       } else if (localMode === "0") {
@@ -412,21 +413,26 @@
       qrCurrentTestRound = Math.min(10, Math.max(1, localRound));
       updateQrModeBannerUI();
 
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?station_id=eq.SYSTEM_MODE&select=input_wip`, {
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      });
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/station_wip?or=(and(group_id.eq.${encodeURIComponent(grp)},station_id.eq.GROUP_MODE),station_id.eq.SYSTEM_MODE)&select=group_id,station_id,input_wip`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
       if (res.ok) {
         const rows = await res.json();
-        if (rows && rows.length > 0) {
-          const decoded = decodeQrSystemModeInput(rows[0].input_wip);
-          qrCurrentSystemMode = decoded.mode;
-          qrCurrentTestRound = decoded.round;
-          localStorage.setItem("ie_chair_system_mode", qrCurrentSystemMode === "OFFICIAL" ? "1" : "0");
-          localStorage.setItem("ie_chair_test_round", String(qrCurrentTestRound));
-          updateQrModeBannerUI();
-          if (!hasCompletedInitialModeSync || prevMode !== qrCurrentSystemMode || prevRound !== qrCurrentTestRound) {
-            hasCompletedInitialModeSync = true;
-            await renderCurrentGroup();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const targetRow = rows.find(r => r.group_id === grp && r.station_id === "GROUP_MODE") ||
+                            rows.find(r => r.station_id === "SYSTEM_MODE");
+          if (targetRow) {
+            const decoded = decodeQrSystemModeInput(targetRow.input_wip);
+            qrCurrentSystemMode = decoded.mode;
+            qrCurrentTestRound = decoded.round;
+            localStorage.setItem(`ie_chair_system_mode_${grp}`, qrCurrentSystemMode === "OFFICIAL" ? "1" : "0");
+            localStorage.setItem(`ie_chair_test_round_${grp}`, String(qrCurrentTestRound));
+            updateQrModeBannerUI();
+            if (!hasCompletedInitialModeSync || prevMode !== qrCurrentSystemMode || prevRound !== qrCurrentTestRound) {
+              hasCompletedInitialModeSync = true;
+              await renderCurrentGroup();
+            }
           }
         }
       }
@@ -869,6 +875,7 @@
       saveCurrentGroupAndRoundConfigs(oldGroup);
     }
     localStorage.setItem("ie_chair_selected_group", groupSelect.value);
+    await syncQrSystemMode();
     await renderCurrentGroup();
   });
 

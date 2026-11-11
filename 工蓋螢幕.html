@@ -213,6 +213,19 @@
           <option value="4" selected>4 秒</option>
           <option value="5">5 秒</option>
         </select>
+        <span style="border-left:1px solid #93c5fd; height:14px; margin:0 2px;"></span>
+        <span style="font-size:12px; color:#7e22ce; font-weight:bold;">📦 站間 WIP 上限:</span>
+        <select id="systemMaxWipSelect" onchange="changeSystemCooldown()" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#7e22ce; border-radius:4px; border:1px solid #d8b4fe; background:#fff; cursor:pointer;" title="限制各工站之間的在製品(WIP)最大暫存件數，過滿時自動阻擋禁止再開工或加料（僅管理員可更改）">
+          <option value="0" selected>無限制 (∞)</option>
+          <option value="1">1 件 (單件流)</option>
+          <option value="2">2 件</option>
+          <option value="3">3 件</option>
+          <option value="4">4 件</option>
+          <option value="5">5 件</option>
+          <option value="6">6 件</option>
+          <option value="8">8 件</option>
+          <option value="10">10 件</option>
+        </select>
       </div>
       <button id="groupLinksModalBtn" onclick="openGroupLinksModal()" style="display:none; padding:6px 12px; font-size:12px; font-weight:bold; border-radius:8px; border:1px solid #0284c7; background:#e0f2fe; color:#0369a1; cursor:pointer;" title="產生並複製 G01~G20 各組專屬工蓋螢幕與 QR Code 連結">
         🔗 各組專屬網址清單
@@ -268,6 +281,7 @@
     <div class="legend">
       <div class="legend-item"><span class="color-box" style="background:#dcfce7; border:1px solid #16a34a;"></span> 綠燈：流暢正常 (物料充足)</div>
       <div class="legend-item"><span class="color-box" style="background:#fef9c3; border:1px solid #ca8a04;"></span> 黃燈：飢餓缺料 (站前為 0 件/套)</div>
+      <div class="legend-item"><span class="color-box" style="background:#f3e8ff; border:2px solid #9333ea;"></span> 🟣 紫燈：滿載阻塞 (站後待領達 WIP 上限)</div>
       <div class="legend-item"><span class="color-box" style="background:#fee2e2; border:2px solid #dc2626;"></span> 🚨 紅燈：瓶頸站（該組 Cycle Time 最大值）</div>
     </div>
     <div id="flowchartContainer">
@@ -629,10 +643,11 @@ let isSwitchingModeOrRound = false;  // 切換確認進行中鎖定旗標
 let lastLocalModeChangeAt = 0;       // 最近一次本地確認切換時間戳，防止非同步重整舊值覆蓋
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工防呆 1~5 秒
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 完工冷卻/起始間隔 1~5 秒 (預設 4 秒，即 3~5 秒)
+let currentMaxWip = Math.max(0, parseInt(localStorage.getItem("ie_chair_max_wip") || "0", 10) || 0); // 站間 WIP 上限 (0=無限制, 1~99=上限件數)
 let currentTableFilter = "ALL"; // ALL, OFFICIAL, TEST
 let currentTestRoundFilter = "ALL_TEST"; // ALL_TEST, or "1"~"10"
 
-// 編碼與解碼 SYSTEM_MODE 雲端欄位 (input_wip: 1=正式, 101~110=第1~10次測試; output_wip: 開工防呆*100 + 完工冷卻)
+// 編碼與解碼 SYSTEM_MODE 雲端欄位 (input_wip: 1=正式, 101~110=第1~10次測試; output_wip: WIP上限*10000 + 開工防呆*100 + 完工冷卻)
 function encodeSystemModeInput(mode, round) {
   return mode === 1 ? 1 : (100 + Math.min(10, Math.max(1, parseInt(round, 10) || 1)));
 }
@@ -642,19 +657,22 @@ function decodeSystemModeInput(val) {
   if (n >= 101 && n <= 110) return { mode: 0, round: n - 100 };
   return { mode: 0, round: 1 };
 }
-function encodeSystemCooldownOutput(startCd, finishCd) {
+function encodeSystemCooldownOutput(startCd, finishCd, maxWip) {
   const s = Math.min(5, Math.max(1, parseInt(startCd, 10) || 3));
   const f = Math.min(5, Math.max(1, parseInt(finishCd, 10) || 4));
-  return s * 100 + f;
+  const m = Math.min(99, Math.max(0, parseInt(maxWip !== undefined ? maxWip : currentMaxWip, 10) || 0));
+  return m * 10000 + s * 100 + f;
 }
 function decodeSystemCooldownOutput(val) {
   const n = parseInt(val, 10) || 304;
-  if (n >= 100) {
-    const s = Math.min(5, Math.max(1, Math.floor(n / 100)));
-    const f = Math.min(5, Math.max(1, n % 100));
-    return { startCd: s, finishCd: f };
+  const m = Math.min(99, Math.max(0, Math.floor(n / 10000)));
+  const rem = n % 10000;
+  if (rem >= 100) {
+    const s = Math.min(5, Math.max(1, Math.floor(rem / 100)));
+    const f = Math.min(5, Math.max(1, rem % 100));
+    return { startCd: s, finishCd: f, maxWip: m };
   }
-  return { startCd: Math.min(5, Math.max(1, n)), finishCd: currentFinishCooldownSec || 4 };
+  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: m };
 }
 
 // 判斷 product_id 是否為測試紀錄，以及屬於第幾次測試 (1~10)
@@ -685,9 +703,12 @@ function updateModeButtonsUI() {
   const readonlyBadge = document.getElementById("readonlyModeBadge");
   const cdSelect = document.getElementById("systemCooldownSelect");
   const fcdSelect = document.getElementById("systemFinishCooldownSelect");
+  const mwSelect = document.getElementById("systemMaxWipSelect");
 
   if (cdSelect) cdSelect.value = currentCooldownSec;
   if (fcdSelect) fcdSelect.value = currentFinishCooldownSec;
+  if (mwSelect) mwSelect.value = String(currentMaxWip);
+  const wipLimitText = currentMaxWip > 0 ? `｜WIP上限:${currentMaxWip}件` : "";
   if (roundSelect && document.activeElement !== roundSelect) {
     // 若使用者剛在選單選了第 N 次測試準備按確認，保留使用者選中的值，絕不跳回第 1 次
     const displayRound = (pendingSelectedTestRound !== null) ? pendingSelectedTestRound : currentTestRound;
@@ -696,7 +717,7 @@ function updateModeButtonsUI() {
 
   if (currentSystemMode === 1) {
     if (readonlyBadge) {
-      readonlyBadge.innerHTML = `🔒 🏆 正式實作 (評分)｜代碼: P01... (僅管理員可調)`;
+      readonlyBadge.innerHTML = `🔒 🏆 正式實作 (評分)｜代碼: P01...${wipLimitText} (僅管理員可調)`;
       readonlyBadge.style.background = "#dcfce7";
       readonlyBadge.style.color = "#15803d";
       readonlyBadge.style.borderColor = "#86efac";
@@ -715,7 +736,7 @@ function updateModeButtonsUI() {
     if (testRoundBox) testRoundBox.style.opacity = "0.65";
   } else {
     if (readonlyBadge) {
-      readonlyBadge.innerHTML = `🔒 🧪 第 ${currentTestRound} 次測試｜代碼: TEST${currentTestRound}-P01... (僅管理員可調)`;
+      readonlyBadge.innerHTML = `🔒 🧪 第 ${currentTestRound} 次測試｜代碼: TEST${currentTestRound}-P01...${wipLimitText} (僅管理員可調)`;
       readonlyBadge.style.background = "#f3e8ff";
       readonlyBadge.style.color = "#7e22ce";
       readonlyBadge.style.borderColor = "#d8b4fe";
@@ -940,10 +961,10 @@ async function changeSystemMode(newMode) {
   loadAll();
 }
 
-// 管理員專屬：修改開工防呆秒數與完工冷卻/起始間隔秒數
+// 管理員專屬：修改開工防呆秒數、完工冷卻/起始間隔秒數與站間 WIP 上限
 async function changeSystemCooldown() {
   if (!isAdminLoggedIn) {
-    alert("⚠️ 權限不足：防呆與冷卻時間僅限管理員修改！");
+    alert("⚠️ 權限不足：防呆、冷卻時間與 WIP 上限僅限管理員修改！");
     updateModeButtonsUI();
     return;
   }
@@ -951,13 +972,21 @@ async function changeSystemCooldown() {
 
   const cdSelect = document.getElementById("systemCooldownSelect");
   const fcdSelect = document.getElementById("systemFinishCooldownSelect");
+  const mwSelect = document.getElementById("systemMaxWipSelect");
   currentCooldownSec = Math.min(5, Math.max(1, parseInt(cdSelect ? cdSelect.value : "3", 10) || 3));
   currentFinishCooldownSec = Math.min(5, Math.max(1, parseInt(fcdSelect ? fcdSelect.value : "4", 10) || 4));
+  currentMaxWip = Math.min(99, Math.max(0, parseInt(mwSelect ? mwSelect.value : "0", 10) || 0));
 
   localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
   localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
+  localStorage.setItem("ie_chair_max_wip", String(currentMaxWip));
+  updateModeButtonsUI();
 
   await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
+  const group = document.getElementById("groupSelect").value;
+  if (group !== "ALL") {
+    renderFlowDiagram(group);
+  }
 }
 
 // 取得目前看板（流程圖 + 統計摘要）正在檢視的單一場次設定，確保各場次流程圖與成績完全獨立互不影響
@@ -1674,6 +1703,8 @@ async function loadAll() {
             const decodedCd = decodeSystemCooldownOutput(targetRow.output_wip);
             currentCooldownSec = decodedCd.startCd;
             currentFinishCooldownSec = decodedCd.finishCd;
+            currentMaxWip = decodedCd.maxWip;
+            localStorage.setItem("ie_chair_max_wip", String(currentMaxWip));
             if (group && group !== "ALL") {
               try {
                 localStorage.setItem(`ie_chair_system_mode_${group}`, String(currentSystemMode));
@@ -1899,9 +1930,12 @@ async function renderFlowDiagram(group) {
       inText = `📥 半成品: ${totalSub}${isMerge ? '套' : '件'} ➔ 可開工: ${inQty}${isMerge ? '套' : '件'}`;
     }
 
+    const isWipBlocked = (!isFinalStation && currentMaxWip > 0 && currentOutBuffer >= currentMaxWip);
     let outText = "";
     if (isFinalStation) {
       outText = `🏁 總成品: ${w.outWip} 件`;
+    } else if (currentMaxWip > 0) {
+      outText = `📤 累計完工: ${w.outWip} 件 (站後待領: ${currentOutBuffer}/${currentMaxWip} 件${isWipBlocked ? ' 🛑已滿' : ''})`;
     } else {
       outText = `📤 累計完工: ${w.outWip} 件 (站後待領: ${currentOutBuffer} 件)`;
     }
@@ -1914,12 +1948,15 @@ async function renderFlowDiagram(group) {
 
     const isBottleneck = (stId === window.currentBottleneckStation && window.currentMaxCycle > 0);
     const bottleneckTag = isBottleneck ? `<br><b style='color:#dc2626;'>🚨 瓶頸站 (CT: ${window.currentMaxCycle.toFixed(1)}s)</b>` : "";
+    const blockedTag = isWipBlocked ? `<br><b style='color:#7e22ce;'>🛑 滿載阻塞 (WIP已達上限 ${currentMaxWip} 件)</b>` : "";
 
-    code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText}<br>${outText}${bottleneckTag}"]\n`;
+    code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText}<br>${outText}${blockedTag}${bottleneckTag}"]\n`;
 
     // 4. 顏色預警邏輯 (嚴格符合圖例規範)：
     if (isBottleneck) {
       styles.push(`style ${stId} fill:#fee2e2,stroke:#dc2626,stroke-width:4px;`); // 🚨 紅燈 (瓶頸站，Cycle Time 最大值)
+    } else if (isWipBlocked) {
+      styles.push(`style ${stId} fill:#f3e8ff,stroke:#9333ea,stroke-width:3px;`); // 🟣 紫燈 (滿載阻塞，站後待領已達 WIP 上限)
     } else if (isRoot) {
       styles.push(`style ${stId} fill:#dcfce7,stroke:#16a34a,stroke-width:2px;`); // 🟢 綠燈 (起始工站原料無限充足)
     } else if (inQty === 0) {

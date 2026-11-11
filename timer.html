@@ -347,7 +347,7 @@
         <span class="scan-badge" id="scanStatusBadge">鏡頭未啟動</span>
       </div>
       <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
-        <span id="cooldownReadonlyBadge" style="padding:3px 7px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; background:#f8fafc; color:#475569; font-weight:bold; display:inline-flex; align-items:center; gap:3px; user-select:none;" title="防呆與冷卻時間由監控中心【管理員區】統一設定，僅管理員可更改">🔒 防呆:<span id="cooldownBadge">3</span>s｜間隔:<span id="finishCooldownBadge">4</span>s</span>
+        <span id="cooldownReadonlyBadge" style="padding:3px 7px; font-size:11px; border-radius:6px; border:1px solid #cbd5e1; background:#f8fafc; color:#475569; font-weight:bold; display:inline-flex; align-items:center; gap:3px; user-select:none;" title="防呆、冷卻時間與站間 WIP 上限由監控中心【管理員區】統一設定，僅管理員可更改">🔒 防呆:<span id="cooldownBadge">3</span>s｜間隔:<span id="finishCooldownBadge">4</span>s｜WIP上限:<span id="maxWipBadge" style="color:#7e22ce;">∞</span></span>
         <button class="btn-scanner-toggle" id="btnToggleScanner" type="button" style="padding:5px 10px; font-size:12px;">
           ▶ 開啟相機
         </button>
@@ -409,6 +409,7 @@
         <div class="wip-counter" style="justify-content:center; min-height:40px;">
           <span class="wip-val" id="wipOutText" style="font-size:36px; color:#059669;">0</span>
         </div>
+        <div id="outBufferStatusText" style="font-size:11px; font-weight:bold; color:#059669; margin-top:4px;">站後待領：0 件</div>
       </div>
     </div>
 
@@ -446,6 +447,7 @@
           <div class="wip-counter" style="justify-content:center; min-height:40px;">
             <span class="wip-val" id="wipOutTextMixed" style="font-size:26px; color:#059669;">0</span>
           </div>
+          <div id="outBufferStatusTextMixed" style="font-size:10px; font-weight:bold; color:#059669; margin-top:2px;">待領: 0</div>
         </div>
       </div>
 
@@ -579,13 +581,17 @@ let currentSystemMode = "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (�
 let currentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1; // 1~10 次測試
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工後防呆鎖定秒數 (1~5 秒)
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 掃描完工後冷卻暨起始站第2件起提示間隔秒數 (預設 4 秒，即 3~5 秒)
+let currentMaxWip = Math.max(0, parseInt(localStorage.getItem("ie_chair_max_wip") || "0", 10) || 0); // 站間 WIP 上限 (0=無限制, 1~99=最大暫存件數)
+let currentOutBuffer = 0;       // 本站站後待領在庫量 (本站已完工數 - 下游已消耗數)
+let isWipBlocked = false;       // 是否因站後待領達 WIP 上限而處於滿載阻塞狀態
+let prevWipBlocked = false;     // 前次滿載阻塞狀態，用於偵測下游消化後自動解除阻塞並響音
 let prevKitCount = null;        // 前次齊套數，用於偵測料到瞬間立即觸發提示音
 let pendingMaterialChime = false; // 若料到時瀏覽器音效尚未解鎖，解鎖瞬間立即補響
 let lastMaterialChimeTime = 0;  // 上次料到提示音時間戳 (用於待命期間定期提醒)
 let rootWaitingNextChime = false; // 起始站第2件起，等待完工後 3~5 秒間隔結束再發出到料提示音
 let overtimeAlertPlayed = false;// 超時 5 分鐘警示防呆
 
-// 編碼與解碼 SYSTEM_MODE 雲端欄位
+// 編碼與解碼 SYSTEM_MODE 雲端欄位 (output_wip: WIP上限*10000 + 開工防呆*100 + 完工冷卻)
 function encodeSystemModeInput(modeStr, round) {
   return modeStr === "OFFICIAL" ? 1 : (100 + Math.min(10, Math.max(1, parseInt(round, 10) || 1)));
 }
@@ -595,19 +601,22 @@ function decodeSystemModeInput(val) {
   if (n >= 101 && n <= 110) return { mode: "TEST", round: n - 100 };
   return { mode: "TEST", round: 1 };
 }
-function encodeSystemCooldownOutput(startCd, finishCd) {
+function encodeSystemCooldownOutput(startCd, finishCd, maxWip) {
   const s = Math.min(5, Math.max(1, parseInt(startCd, 10) || 3));
   const f = Math.min(5, Math.max(1, parseInt(finishCd, 10) || 4));
-  return s * 100 + f;
+  const m = Math.min(99, Math.max(0, parseInt(maxWip !== undefined ? maxWip : currentMaxWip, 10) || 0));
+  return m * 10000 + s * 100 + f;
 }
 function decodeSystemCooldownOutput(val) {
   const n = parseInt(val, 10) || 304;
-  if (n >= 100) {
-    const s = Math.min(5, Math.max(1, Math.floor(n / 100)));
-    const f = Math.min(5, Math.max(1, n % 100));
-    return { startCd: s, finishCd: f };
+  const m = Math.min(99, Math.max(0, Math.floor(n / 10000)));
+  const rem = n % 10000;
+  if (rem >= 100) {
+    const s = Math.min(5, Math.max(1, Math.floor(rem / 100)));
+    const f = Math.min(5, Math.max(1, rem % 100));
+    return { startCd: s, finishCd: f, maxWip: m };
   }
-  return { startCd: Math.min(5, Math.max(1, n)), finishCd: currentFinishCooldownSec || 4 };
+  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: m };
 }
 
 function isTestProductId(pid) {
@@ -630,6 +639,7 @@ function getCurProductCode() {
 let isRootStation = false;     // 是否為起點工站 (前無工作站)
 let feederStations = [];       // 前置工站清單 (如 ST02, ST04, ST06, ST07, ST08)
 let nextStationId = null;      // 下一站代號
+let successorStations = [];    // 後續去向工站清單 (用於計算站後待領在庫量)
 
 let manualBufferWip = 0;       // 作業員手動設定的半成品組件備料 (input_wip)
 let currentOutWip = 0;         // 站後累計完工數 (output_wip)
@@ -672,6 +682,10 @@ function updateCooldownBadgeUI() {
   if (cb) cb.textContent = currentCooldownSec;
   const fcb = document.getElementById("finishCooldownBadge");
   if (fcb) fcb.textContent = currentFinishCooldownSec;
+  const mwb = document.getElementById("maxWipBadge");
+  if (mwb) {
+    mwb.textContent = currentMaxWip > 0 ? `${currentMaxWip}件` : "∞";
+  }
 }
 
 // 取得目前系統場次對應的專屬流程 Key (例如 G01-T1 ~ G01-T10, G01-OFFICIAL)
@@ -702,6 +716,7 @@ async function init() {
           const decodedCd = decodeSystemCooldownOutput(targetRow.output_wip);
           currentCooldownSec = decodedCd.startCd;
           currentFinishCooldownSec = decodedCd.finishCd;
+          currentMaxWip = decodedCd.maxWip;
         }
       }
     } catch (e) {}
@@ -796,6 +811,10 @@ async function updateFlowInfo() {
 
   const myFlow = flowData.find(f => (f.station_id || "").trim() === stationId);
   nextStationId = myFlow && myFlow.next_station_id ? myFlow.next_station_id.trim() : null;
+  successorStations = flowData
+    .filter(f => (f.station_id || "").trim() === stationId)
+    .map(f => (f.next_station_id || "").trim())
+    .filter(Boolean);
 
   // 防呆保護：若 URL 明確帶有 sub_init (非起始站參數) 或非 ST01 且 flowData 為空，絕不誤判為起始站
   const explicitNonRoot = urlParams.has("sub_init") && !urlIsRoot;
@@ -895,37 +914,15 @@ async function fetchWipData() {
   }
 }
 
-// 🌟 核心計算：萬能齊套約束（BOM 1:1）計算
+// 🌟 核心計算：萬能齊套約束（BOM 1:1）與 站間 WIP 上限滿載阻擋 (Blocking) 計算
 async function computeKitting() {
-  if (isRootStation || feederStations.length === 0) {
-    kitCount = 9999;
-    window.currentTotalSub = 9999;
-    const now = Date.now();
-    const inFinishCooldown = (now < scanCooldownUntil);
-    const becameReady = (prevKitCount === null || prevKitCount === 0) && !isWorking && !inFinishCooldown;
-    prevKitCount = kitCount;
-
-    if (!isWorking && !inFinishCooldown) {
-      if (becameReady || rootWaitingNextChime) {
-        rootWaitingNextChime = false;
-        alertMaterialReady();
-        const nextPieceNo = currentOutWip + 1;
-        showScanBanner(`🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`, "success", 4000);
-      } else if (pendingMaterialChime || (now - lastMaterialChimeTime) >= 2000) {
-        // 起始工站原料已就緒但超過 2 秒尚未掃碼開工，高頻率持續響音與震動提醒
-        alertMaterialReady();
-      }
-    }
-    refreshUiNumbers();
-    return;
-  }
-
-  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據)
+  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據，同時供起始站與下游站計算站後待領在庫量)
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
   );
-  const allWips = await res.json();
+  const allWipsJson = await res.json();
+  const allWips = Array.isArray(allWipsJson) ? allWipsJson : [];
   const wipMap = {};
   allWips.forEach(w => {
     const stKey = (w.station_id || "").trim();
@@ -941,6 +938,58 @@ async function computeKitting() {
   if (wipMap[stationId]) {
     manualBufferWip = wipMap[stationId].input_wip || 0;
     currentOutWip = wipMap[stationId].output_wip || 0;
+  }
+
+  // 📦 計算【本站站後待領在庫量 (currentOutBuffer)】與【滿載阻塞狀態 (isWipBlocked)】
+  // 公式：站後待領數 = max(0, 本站累計完工數 - 下游工站已自本站領取之消耗量)
+  const hasDownstream = (successorStations && successorStations.length > 0) || Boolean(nextStationId);
+  if (!hasDownstream) {
+    currentOutBuffer = currentOutWip;
+    isWipBlocked = false;
+  } else {
+    const succList = (successorStations && successorStations.length > 0) ? successorStations : [nextStationId];
+    let downstreamConsumed = 0;
+    succList.forEach(s => {
+      const sWip = wipMap[s] || { input_wip: 0, output_wip: 0 };
+      const sFeederConsumed = Math.max(0, (sWip.output_wip || 0) - (sWip.input_wip || 0));
+      if (sFeederConsumed > downstreamConsumed) downstreamConsumed = sFeederConsumed;
+    });
+    currentOutBuffer = Math.max(0, currentOutWip - downstreamConsumed);
+    isWipBlocked = (currentMaxWip > 0 && currentOutBuffer >= currentMaxWip);
+  }
+
+  const justUnblocked = (prevWipBlocked === true && !isWipBlocked);
+  prevWipBlocked = isWipBlocked;
+
+  if (isRootStation || feederStations.length === 0) {
+    kitCount = 9999;
+    window.currentTotalSub = 9999;
+    const now = Date.now();
+    const inFinishCooldown = (now < scanCooldownUntil);
+    const becameReady = ((prevKitCount === null || prevKitCount === 0) || justUnblocked) && !isWorking && !inFinishCooldown && !isWipBlocked;
+    prevKitCount = kitCount;
+
+    if (isWipBlocked || isWorking) {
+      stopAllMaterialChimes();
+    } else if (!isWorking && !inFinishCooldown) {
+      if (becameReady || rootWaitingNextChime) {
+        rootWaitingNextChime = false;
+        alertMaterialReady();
+        const nextPieceNo = currentOutWip + 1;
+        showScanBanner(
+          justUnblocked
+            ? `🔔 下游已消化半成品（站後待領 ${currentOutBuffer}/${currentMaxWip} 件），阻塞已解除！請掃描 QR Code 開始第 ${nextPieceNo} 件！`
+            : `🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`,
+          "success",
+          4000
+        );
+      } else if (pendingMaterialChime || (now - lastMaterialChimeTime) >= 2000) {
+        // 起始工站原料已就緒且未滿載阻塞，超過 2 秒尚未掃碼開工則持續響音與震動提醒
+        alertMaterialReady();
+      }
+    }
+    refreshUiNumbers();
+    return;
   }
 
   // 本站累計已完工/開工總件數
@@ -987,19 +1036,25 @@ async function computeKitting() {
   window.currentFeederKit = feederKit;
   window.currentTotalSub = totalSubassembly;
 
-  // 🔔 只要料到（齊套數由無變有，或有新半成品送達使齊套數增加），立即觸發「叮咚～」聲光提示！
-  const materialArrived = (prevKitCount === null && kitCount > 0) || (prevKitCount !== null && kitCount > prevKitCount);
+  // 🔔 只要料到（齊套數由無變有、新半成品送達，或下游消化使本站解除滿載阻塞），立即觸發「叮咚～」聲光提示！
+  const materialArrived = ((prevKitCount === null && kitCount > 0) || (prevKitCount !== null && kitCount > prevKitCount) || (justUnblocked && kitCount > 0));
   prevKitCount = kitCount;
 
-  if (!isWorking && kitCount > 0) {
+  if (!isWorking && kitCount > 0 && !isWipBlocked) {
     if (materialArrived) {
       alertMaterialReady();
-      showScanBanner(`🔔 前站物料已送達（目前可開工：${kitCount} 套）！請掃描 QR Code 開始作業！`, "success", 4000);
+      showScanBanner(
+        justUnblocked
+          ? `🔔 下游已消化半成品（站後待領 ${currentOutBuffer}/${currentMaxWip} 件），請掃描 QR Code 繼續作業！`
+          : `🔔 前站物料已送達（目前可開工：${kitCount} 套）！請掃描 QR Code 開始作業！`,
+        "success",
+        4000
+      );
     } else if (pendingMaterialChime || (!isRootStation && (Date.now() - lastMaterialChimeTime) >= 2000)) {
       // 若先前因瀏覽器尚未解鎖未響，或後續工站料已到齊但超過 2 秒尚未掃碼開工，高頻率持續自動響音與震動提醒
       alertMaterialReady();
     }
-  } else if (isWorking || kitCount <= 0) {
+  } else if (isWorking || kitCount <= 0 || isWipBlocked) {
     if (typeof stopAllMaterialChimes === "function") {
       stopAllMaterialChimes();
     } else {
@@ -1051,6 +1106,50 @@ function refreshUiNumbers() {
 
   document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
 
+  // 更新「站後待領在庫量 / WIP 上限」狀態標籤
+  const outBufEl = document.getElementById("outBufferStatusText");
+  const outBufMixedEl = document.getElementById("outBufferStatusTextMixed");
+  const hasDownstream = (successorStations && successorStations.length > 0) || Boolean(nextStationId);
+  if (!hasDownstream) {
+    if (outBufEl) {
+      outBufEl.textContent = `🏁 終點站總成品：${currentOutWip} 件`;
+      outBufEl.style.color = "#7c3aed";
+    }
+    if (outBufMixedEl) {
+      outBufMixedEl.textContent = `🏁 成品: ${currentOutWip}`;
+      outBufMixedEl.style.color = "#7c3aed";
+    }
+  } else if (currentMaxWip > 0) {
+    if (isWipBlocked) {
+      if (outBufEl) {
+        outBufEl.textContent = `🛑 站後待領：${currentOutBuffer} / 上限 ${currentMaxWip} 件 (已滿載阻塞)`;
+        outBufEl.style.color = "#dc2626";
+      }
+      if (outBufMixedEl) {
+        outBufMixedEl.textContent = `🛑 待領: ${currentOutBuffer}/${currentMaxWip} (已滿)`;
+        outBufMixedEl.style.color = "#dc2626";
+      }
+    } else {
+      if (outBufEl) {
+        outBufEl.textContent = `📦 站後待領：${currentOutBuffer} / 上限 ${currentMaxWip} 件`;
+        outBufEl.style.color = "#059669";
+      }
+      if (outBufMixedEl) {
+        outBufMixedEl.textContent = `📦 待領: ${currentOutBuffer}/${currentMaxWip}`;
+        outBufMixedEl.style.color = "#059669";
+      }
+    }
+  } else {
+    if (outBufEl) {
+      outBufEl.textContent = `📦 站後待領：${currentOutBuffer} 件 (WIP 無上限)`;
+      outBufEl.style.color = "#059669";
+    }
+    if (outBufMixedEl) {
+      outBufMixedEl.textContent = `📦 待領: ${currentOutBuffer}`;
+      outBufMixedEl.style.color = "#059669";
+    }
+  }
+
   // 渲染前置零件晶片
   if (!isRootStation && feederStations.length > 0) {
     const container = document.getElementById("feederChips");
@@ -1085,6 +1184,14 @@ function refreshUiNumbers() {
   if (currentSystemMode === "OFFICIAL" && currentOutWip >= 1) {
     disableStartButton("🏆 正式實作已完成 1 件 (成績已鎖定)");
     showMsg("🏆 本組正式實作評分數據已完整記錄！若需再次練習，請通知老師/管理員切換至測試模式。", "#b45309");
+    return;
+  }
+
+  // 🌟 非計時中：檢查是否因站後待領達 WIP 上限而處於「滿載阻塞 (Blocked)」狀態
+  if (isWipBlocked) {
+    const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
+    disableStartButton(`🛑 站後暫存已滿 (${currentOutBuffer}/${currentMaxWip} 件) - 請等待下游消化`);
+    showMsg(`🛑 站後在製品已達上限 (${currentOutBuffer}/${currentMaxWip} 件)！過滿不可再開工，請等待下游【${downLabel}】完成消化後自動解鎖！`, "#9333ea");
     return;
   }
 
@@ -1177,7 +1284,17 @@ async function updateRawDb(newRaw) {
   await computeKitting();
 }
 
-document.getElementById("btnPlusIn").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
+document.getElementById("btnPlusIn").onclick = () => {
+  const curAvail = isRootStation ? manualBufferWip : kitCount;
+  if (currentMaxWip > 0 && curAvail >= currentMaxWip) {
+    playAudioFeedback("WARNING");
+    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 件)，過滿不能再手動增加！`;
+    showMsg(tip, "#9333ea");
+    showScanBanner(tip, "warn", 3000);
+    return;
+  }
+  updateWipDb(manualBufferWip + 1, currentOutWip);
+};
 document.getElementById("btnMinusIn").onclick = () => {
   if (manualBufferWip <= 0) return;
   if (confirm(`確定要手動扣減 1 件站前在製品庫存嗎？（目前：${manualBufferWip} 件）`)) {
@@ -1185,7 +1302,17 @@ document.getElementById("btnMinusIn").onclick = () => {
   }
 };
 
-document.getElementById("btnPlusSub").onclick = () => updateWipDb(manualBufferWip + 1, currentOutWip);
+document.getElementById("btnPlusSub").onclick = () => {
+  const curSub = window.currentTotalSub ?? manualBufferWip;
+  if (currentMaxWip > 0 && curSub >= currentMaxWip) {
+    playAudioFeedback("WARNING");
+    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 套)，過滿不能再手動增加！`;
+    showMsg(tip, "#9333ea");
+    showScanBanner(tip, "warn", 3000);
+    return;
+  }
+  updateWipDb(manualBufferWip + 1, currentOutWip);
+};
 document.getElementById("btnMinusSub").onclick = () => {
   if (manualBufferWip <= 0) return;
   if (confirm(`確定要手動扣減 1 套半成品庫存嗎？（目前：${manualBufferWip} 套）`)) {
@@ -1193,7 +1320,16 @@ document.getElementById("btnMinusSub").onclick = () => {
   }
 };
 
-document.getElementById("btnPlusRaw").onclick = () => updateRawDb(rawPartStock + 1);
+document.getElementById("btnPlusRaw").onclick = () => {
+  if (currentMaxWip > 0 && rawPartStock >= currentMaxWip) {
+    playAudioFeedback("WARNING");
+    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 顆)，過滿不能再手動增加！`;
+    showMsg(tip, "#9333ea");
+    showScanBanner(tip, "warn", 3000);
+    return;
+  }
+  updateRawDb(rawPartStock + 1);
+};
 document.getElementById("btnMinusRaw").onclick = () => {
   if (rawPartStock <= 0) return;
   if (confirm(`確定要手動扣減 1 顆原生零件庫存嗎？（目前：${rawPartStock} 顆）`)) {
@@ -1230,12 +1366,14 @@ async function autoSyncLive() {
             await updateFlowInfo();
             if (!isWorking) await syncHistoryFromDb();
           }
-          if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec) {
+          if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec || decodedCd.maxWip !== currentMaxWip) {
             currentCooldownSec = decodedCd.startCd;
             currentFinishCooldownSec = decodedCd.finishCd;
+            currentMaxWip = decodedCd.maxWip;
             try {
               localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
               localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
+              localStorage.setItem("ie_chair_max_wip", String(currentMaxWip));
             } catch(e) {}
             updateCooldownBadgeUI();
           }
@@ -1680,9 +1818,9 @@ async function playAudioFeedback(type) {
 
 // 播放目前組別/測試組數專屬的「可開工提示音 + 震動」
 async function playDingDongSound(overrideRound, isManualTest = false) {
-  // 🛡️ 嚴格防呆：若非手動點擊測試按鈕，只要正在計時作業中，或非起始站且可開工數 kitCount <= 0（缺料），一律強制中斷並禁止發聲！
+  // 🛡️ 嚴格防呆：若非手動點擊測試按鈕，只要正在計時作業中、滿載阻塞 (isWipBlocked)，或非起始站且可開工數 kitCount <= 0（缺料），一律強制中斷並禁止發聲！
   if (!isManualTest) {
-    if (isWorking || (!isRootStation && kitCount <= 0)) {
+    if (isWorking || isWipBlocked || (!isRootStation && kitCount <= 0)) {
       stopAllMaterialChimes();
       return;
     }
@@ -1749,8 +1887,8 @@ async function playDingDongSound(overrideRound, isManualTest = false) {
 
 // 🔔 料足聲光與震動提示 (新物料齊套瞬間及每 2 秒高頻觸發強烈脈衝、專屬音效與震動)
 function alertMaterialReady() {
-  // 🛡️ 若為下游工站且缺料 (kitCount <= 0) 或作業計時中，絕不觸發任何到料提示音或綠燈脈衝
-  if (isWorking || (!isRootStation && kitCount <= 0)) {
+  // 🛡️ 若為下游工站且缺料 (kitCount <= 0)、滿載阻塞 (isWipBlocked) 或作業計時中，絕不觸發任何到料提示音或綠燈脈衝
+  if (isWorking || isWipBlocked || (!isRootStation && kitCount <= 0)) {
     stopAllMaterialChimes();
     updateBreathingLight();
     return;
@@ -1799,8 +1937,8 @@ function updateBreathingLight() {
       if (scannerCard) scannerCard.classList.add("breathing-blue-working");
     }
   } else {
-    // 3. 待命狀態：若非完工冷卻期間且料足齊套（符合開工條件）：綠色呼吸燈常駐呼吸！
-    if (now >= scanCooldownUntil) {
+    // 3. 待命狀態：若非完工冷卻期間、非滿載阻塞 (isWipBlocked) 且料足齊套（符合開工條件）：綠色呼吸燈常駐呼吸！
+    if (now >= scanCooldownUntil && !isWipBlocked) {
       const canStart = (isRootStation || kitCount > 0);
       if (canStart) {
         timerCard.classList.add("breathing-green-ready");
@@ -1849,7 +1987,7 @@ function updateScannerBadge() {
 
   // 🔔 高頻率可開工提示音與震動迴圈 (每 2.0 秒自動觸發一次，不需等待網路輪詢)
   const isOfficialDone = (currentSystemMode === "OFFICIAL" && currentOutWip >= 1);
-  if (!isRootStation && kitCount <= 0) {
+  if (isWipBlocked || (!isRootStation && kitCount <= 0)) {
     stopAllMaterialChimes();
   } else if (window.isTimerReadyForChime && !isWorking && !isOfficialDone && now >= scanCooldownUntil && (isRootStation || kitCount > 0)) {
     if (rootWaitingNextChime) {
@@ -1914,6 +2052,19 @@ function updateScannerBadge() {
       }
     }
   } else {
+    if (isWipBlocked) {
+      const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
+      if (badge) {
+        badge.textContent = `🛑 滿載阻塞 (${currentOutBuffer}/${currentMaxWip})`;
+        badge.className = "scan-badge badge-locked";
+      }
+      if (mainBtn) {
+        mainBtn.textContent = `🛑 站後已滿 (${currentOutBuffer}/${currentMaxWip} 件) - 請等待【${downLabel}】消化`;
+        mainBtn.className = "main-btn btn-disabled";
+        mainBtn.disabled = true;
+      }
+      return;
+    }
     if (badge) {
       badge.textContent = "🟢 等候掃碼開工";
       badge.className = "scan-badge badge-ready";
@@ -1935,6 +2086,16 @@ async function handleStartWork(source = "SCAN") {
     playAudioFeedback("WARNING");
     const tip = "🏆 本組正式實作已完成 1 件評分！成績已鎖定，不可重複開工。若需練習請由後台切換為測試練習。";
     showMsg(tip, "#b45309");
+    showScanBanner(tip, "warn", 4000);
+    return;
+  }
+
+  // 站間 WIP 上限滿載防呆 (Pre-Start Blocking：站後待領達 WIP 上限時禁止開工下一件)
+  if (isWipBlocked) {
+    playAudioFeedback("WARNING");
+    const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
+    const tip = `🛑 站後在製品已達上限 (${currentOutBuffer}/${currentMaxWip} 件)！過滿不能再加，請等待下游【${downLabel}】消化後再開工！`;
+    showMsg(tip, "#9333ea");
     showScanBanner(tip, "warn", 4000);
     return;
   }
@@ -2045,15 +2206,20 @@ async function handleFinishWork(source = "SCAN") {
     showScanBanner(finishMsg, "success", 3000);
     updateScannerBadge();
 
-    // 冷卻/間隔期結束：自動恢復待命狀態；若為起始站則效法中間站立即發出「叮咚～」到料提示音！
+    // 冷卻/間隔期結束：自動恢復待命狀態；若為起始站且未達 WIP 上限則效法中間站立即發出「叮咚～」到料提示音！
     setTimeout(() => {
       updateScannerBadge();
       refreshUiNumbers();
-      if (isRootStation && !isWorking && !(currentSystemMode === "OFFICIAL" && currentOutWip >= 1)) {
+      if (isRootStation && !isWorking && !isWipBlocked && !(currentSystemMode === "OFFICIAL" && currentOutWip >= 1)) {
         rootWaitingNextChime = false;
         alertMaterialReady();
         const nextPieceNo = currentOutWip + 1;
         showScanBanner(`🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`, "success", 4000);
+      } else if (isWipBlocked) {
+        rootWaitingNextChime = false;
+        stopAllMaterialChimes();
+        const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
+        showScanBanner(`🛑 站後待領已滿 (${currentOutBuffer}/${currentMaxWip} 件)！請等待下游【${downLabel}】完成消化後自動解鎖！`, "warn", 4000);
       }
     }, (currentFinishCooldownSec * 1000) + 80);
 

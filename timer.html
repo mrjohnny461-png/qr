@@ -1150,16 +1150,20 @@ function refreshUiNumbers() {
     }
   }
 
-  // 渲染前置零件晶片
+  // 渲染前置零件晶片 (含差異比對：無變動時不重建 DOM，防止畫面跳動)
   if (!isRootStation && feederStations.length > 0) {
     const container = document.getElementById("feederChips");
-    container.innerHTML = "";
-    feederDetails.forEach(d => {
-      const chip = document.createElement("span");
-      chip.className = `feeder-chip ${d.ok ? 'chip-ok' : 'chip-empty'}`;
-      chip.innerHTML = `${d.station} 半成品: ${d.avail}件 ${d.ok ? '✓' : '×'}`;
-      container.appendChild(chip);
-    });
+    const chipsSig = feederDetails.map(d => `${d.station}:${d.avail}:${d.ok ? 1 : 0}`).join("|");
+    if (container && window.lastFeederChipsSig !== chipsSig) {
+      window.lastFeederChipsSig = chipsSig;
+      container.innerHTML = "";
+      feederDetails.forEach(d => {
+        const chip = document.createElement("span");
+        chip.className = `feeder-chip ${d.ok ? 'chip-ok' : 'chip-empty'}`;
+        chip.innerHTML = `${d.station} 半成品: ${d.avail}件 ${d.ok ? '✓' : '×'}`;
+        container.appendChild(chip);
+      });
+    }
 
     const badge = document.getElementById("kitSummaryBadge");
     if (kitCount > 0) {
@@ -2582,6 +2586,13 @@ async function syncHistoryFromDb() {
     document.getElementById("cycleTotalBadge").textContent = `${isTestMode ? `🧪 第 ${currentTestRound} 次測試完成` : "🏆 正式完成"}：${currentOutWip} 件`;
 
     const list = document.getElementById("historyList");
+    const historySig = `${currentSystemMode}_${currentTestRound}_` + events.map(ev => `${ev.id}:${ev.product_id}:${ev.duration_sec}:${ev.wip_before_start}`).join("|");
+    if (window.lastHistoryListSig === historySig) {
+      refreshUiNumbers();
+      return;
+    }
+    window.lastHistoryListSig = historySig;
+
     if (events.length === 0) {
       list.innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">尚未開始作業</div>`;
       refreshUiNumbers();

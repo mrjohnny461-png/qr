@@ -141,16 +141,10 @@
     <button id="loadBtn" class="btn-primary">🔄 手動重新整理</button>
     <button id="downloadBtn" disabled>📥 下載 CSV</button>
     
-    <!-- 預設啟動即時同步 -->
-    <div class="live-badge">
+    <!-- 常駐即時更新狀態標示 (無下拉選單，有新資料自動更新、無變動不閃爍) -->
+    <div class="live-badge" style="user-select:none;" title="背景自動監聽雲端資料庫，有新資料時立即更新畫面，無新資料時保持穩定不閃爍">
       <span class="pulse-dot"></span>
-      <span>即時同步：</span>
-      <select id="refreshIntervalSelect" style="padding:2px 6px; font-size:12px; border-radius:4px; border:1px solid #a7f3d0; background:#fff;">
-        <option value="3000" selected>每 3 秒</option>
-        <option value="5000">每 5 秒</option>
-        <option value="10000">每 10 秒</option>
-        <option value="0">暫停同步</option>
-      </select>
+      <span>即時更新</span>
     </div>
 
     <!-- 🎯 實作模式與測試組數 (僅限管理員調整，現場看板模式僅唯讀顯示) -->
@@ -481,6 +475,8 @@ let currentEvents = [];
 const allStations = ["ST01","ST02","ST03","ST04","ST05","ST06","ST07","ST08","ST09","ST10"];
 let autoRefreshTimer = null;
 let refreshInterval = 3000;
+let lastRenderedDataSignature = ""; // 記錄上次渲染表格與統計摘要時的資料指紋，無新資料時跳過 DOM 重繪防止畫面跳動
+let lastRenderedFlowSignature = ""; // 記錄上次渲染 Mermaid 流程圖時的語法指紋，無變化時跳過 SVG 重繪防止流程圖閃爍
 
 // 🏷️ 讀取各組別與各工站之生產料號
 function getStationPart(group, station) {
@@ -591,7 +587,7 @@ document.getElementById("groupSelect").onchange = function() {
   updateModeButtonsUI();
   loadAll();
 };
-document.getElementById("loadBtn").onclick = loadAll;
+document.getElementById("loadBtn").onclick = () => loadAll(true);
 
 // ⚡ 跨分頁即時動態同步 (當在 qrcode.html 修改料號或站前可用物料設定時，即時更新螢幕與彈窗)
 window.addEventListener("storage", function(e) {
@@ -623,16 +619,6 @@ function startAutoRefresh() {
     autoRefreshTimer = setInterval(loadAll, refreshInterval);
   }
 }
-
-document.getElementById("refreshIntervalSelect").onchange = function() {
-  refreshInterval = parseInt(this.value, 10);
-  startAutoRefresh();
-  if (refreshInterval === 0) {
-    document.getElementById("status").textContent = "已暫停同步";
-  } else {
-    document.getElementById("status").textContent = `每 ${refreshInterval / 1000} 秒同步中`;
-  }
-};
 
 // 🔐 權限管理系統 (預設為「現場看板唯讀模式」，解鎖後切換為「管理員模式」)
 // 🎯 實作輪次控制 (0: 測試練習 [支援第 1~10 次測試], 1: 正式實作) 與 掃描防呆/完工冷卻秒數
@@ -1169,8 +1155,8 @@ function setTableFilter(filter) {
     }
   });
   updateFlowViewRoundUI();
-  showTable(currentEvents);
   showStats(currentEvents);
+  showTable(currentEvents);
   const group = document.getElementById("groupSelect").value;
   if (group !== "ALL") {
     renderFlowDiagram(group);
@@ -1200,8 +1186,8 @@ function setTestRoundTableFilter(val) {
     });
   }
   updateFlowViewRoundUI();
-  showTable(currentEvents);
   showStats(currentEvents);
+  showTable(currentEvents);
   const group = document.getElementById("groupSelect").value;
   if (group !== "ALL") {
     renderFlowDiagram(group);
@@ -1655,8 +1641,13 @@ function getStationFlowInfoForEvent(row) {
   };
 }
 
-// 核心讀取與渲染
-async function loadAll() {
+// 核心讀取與渲染 (含 Smart Diff 智慧差異比對：當雲端資料無任何變動時，跳過 DOM 與流程圖重繪，徹底解決每 3 秒畫面閃爍跳動問題)
+async function loadAll(forceRender = false) {
+  const isForced = (forceRender === true);
+  if (isForced) {
+    lastRenderedDataSignature = "";
+    lastRenderedFlowSignature = "";
+  }
   const grpSelectEl = document.getElementById("groupSelect");
   if (urlLockedGroup && grpSelectEl) {
     grpSelectEl.value = urlLockedGroup;
@@ -1721,6 +1712,36 @@ async function loadAll() {
 
     updateFlowViewRoundUI();
 
+    // 🔍 計算表格與統計摘要的「資料指紋 (Data Signature)」，無變動時不清空重建表格 DOM
+    const eventsSig = currentEvents
+      .map(r => `${r.id}:${r.group_id}:${r.station_id}:${r.product_id}:${r.status}:${r.duration_sec}:${r.finish_time}:${r.wip_before_start}:${r.wip_after_finish}`)
+      .join("|");
+    const partsSig = localStorage.getItem("ie_chair_group_station_parts") || "";
+    const rawSig = localStorage.getItem("ie_chair_group_station_raw") || "";
+    const dataSignature = [
+      group,
+      currentSystemMode,
+      currentTestRound,
+      currentCooldownSec,
+      currentFinishCooldownSec,
+      currentMaxWip,
+      currentTableFilter,
+      currentTestRoundFilter,
+      isAdminLoggedIn ? 1 : 0,
+      eventsSig,
+      partsSig,
+      rawSig
+    ].join("__");
+
+    const hasTableDataChanged = isForced || (dataSignature !== lastRenderedDataSignature);
+    if (hasTableDataChanged) {
+      lastRenderedDataSignature = dataSignature;
+      // 先執行 showStats 計算最新瓶頸站 (window.currentBottleneckStation)，再繪製流程圖與表格
+      showStats(currentEvents);
+      showTable(currentEvents);
+    }
+
+    let hasFlowChanged = false;
     if (group !== "ALL") {
       const viewRound = getEffectiveViewRound();
       const roundParam = viewRound.mode === "OFFICIAL" ? "OFFICIAL" : String(viewRound.round || currentTestRound);
@@ -1741,7 +1762,7 @@ async function loadAll() {
         topGotoBtn.innerHTML = `🖨️ 前往【${group}】QR Code 頁面 ❯`;
         topGotoBtn.style.display = "inline-flex";
       }
-      await renderFlowDiagram(group);
+      hasFlowChanged = await renderFlowDiagram(group, isForced);
     } else {
       document.getElementById("flowCard").style.display = "none";
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
@@ -1750,19 +1771,21 @@ async function loadAll() {
       if (topGotoBtn) topGotoBtn.style.display = "none";
     }
 
-    showTable(currentEvents);
-    showStats(currentEvents);
     document.getElementById("downloadBtn").disabled = currentEvents.length === 0;
 
     const now = new Date().toLocaleTimeString();
-    document.getElementById("status").textContent = `最後同步：${now} (${currentEvents.length} 筆)`;
+    if (hasTableDataChanged || hasFlowChanged) {
+      document.getElementById("status").textContent = `最後更新：${now} (${currentEvents.length} 筆)`;
+    } else {
+      document.getElementById("status").textContent = `最後檢查：${now} (${currentEvents.length} 筆｜無新變動)`;
+    }
   } catch (err) {
     document.getElementById("status").textContent = "同步異常：" + err.message;
   }
 }
 
-// 畫工站順序圖 (支援每次測試擁有獨立流程圖 + 多站匯流齊套數計算)
-async function renderFlowDiagram(group) {
+// 畫工站順序圖 (支援每次測試擁有獨立流程圖 + 多站匯流齊套數計算 + 無變動不重繪 SVG 防跳動)
+async function renderFlowDiagram(group, forceRender = false) {
   const container = document.getElementById("flowchartContainer");
   const viewRound = getEffectiveViewRound();
   const flowKey = getFlowKeyForRound(group, viewRound);
@@ -1789,6 +1812,11 @@ async function renderFlowDiagram(group) {
   }
 
   if (!Array.isArray(flows) || flows.length === 0) {
+    const emptySig = `EMPTY__${group}__${viewRound.label}`;
+    if (!forceRender && lastRenderedFlowSignature === emptySig) {
+      return false;
+    }
+    lastRenderedFlowSignature = emptySig;
     container.innerHTML = `
       <div style="text-align:center; padding: 20px;">
         <p style="color:#64748b;">本組（${group}）於【${viewRound.label}】尚未設定工站順序流程。</p>
@@ -1796,7 +1824,7 @@ async function renderFlowDiagram(group) {
           🛠️ 立即自訂【${viewRound.label}】工站順序
         </button>
       </div>`;
-    return;
+    return true;
   }
 
   const roundEvents = currentEvents.filter(r =>
@@ -1974,11 +2002,20 @@ async function renderFlowDiagram(group) {
 
   code += styles.join("\n");
 
+  // 🔍 比對本次產生的 Mermaid 語法指紋與上次是否完全相同：若無任何變動則直接返回，不重繪 SVG，徹底消除畫面每 3 秒閃爍跳動！
+  const flowSignature = `${group}__${flowKey}__${code}`;
+  if (!forceRender && flowSignature === lastRenderedFlowSignature) {
+    return false;
+  }
+  lastRenderedFlowSignature = flowSignature;
+
   try {
     const { svg } = await mermaid.render("mermaidGraph_" + Date.now(), code);
     container.innerHTML = svg;
+    return true;
   } catch (err) {
     container.innerHTML = "<div style='color:red;'>流程圖語法產生錯誤</div>";
+    return false;
   }
 }
 

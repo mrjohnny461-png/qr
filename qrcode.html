@@ -766,6 +766,18 @@
       const box = card.querySelector(`#rawBox_${st}`);
       const nameInp = card.querySelector(`.station-raw-name`);
       const initInp = card.querySelector(`.station-raw-init`);
+      const maxWipSel = card.querySelector(`.station-max-wip`);
+      const subInitInp = card.querySelector(`.station-sub-init`);
+      if (maxWipSel) {
+        maxWipSel.onchange = function() {
+          saveCurrentGroupAndRoundConfigs(activeGroup);
+        };
+      }
+      if (subInitInp) {
+        subInitInp.onchange = function() {
+          saveCurrentGroupAndRoundConfigs(activeGroup);
+        };
+      }
       if (chk && box) {
         chk.onchange = function() {
           box.style.display = this.checked ? "flex" : "none";
@@ -894,7 +906,7 @@
     } catch (e) {}
   }
 
-  function saveCurrentGroupAndRoundConfigs(group) {
+  async function saveCurrentGroupAndRoundConfigs(group) {
     const eff = getEffectiveQrRound();
     const curFlowKey = getCurrentQrFlowKey(group);
     const parts = collectCurrentParts();
@@ -909,9 +921,9 @@
     allRaw[curFlowKey] = rawConfigs;
     if (eff.isLive) {
       allRaw[group] = rawConfigs;
-      syncStationWipLimitsToCloud(group, rawConfigs);
     }
     saveAllGroupRawConfigs(allRaw);
+    await syncStationWipLimitsToCloud(group, rawConfigs);
   }
 
   groupSelect.addEventListener("change", async function(e) {

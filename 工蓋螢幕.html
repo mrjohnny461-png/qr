@@ -788,13 +788,40 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal,
 async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
+    const flowKey = getFlowKeyForRound(group, viewRound);
+    // 若切換至新場次 (例如 G20-T2)，確保雲端 station_flow 也同步建立該場次的流程紀錄
+    if (flowKey && flowKey !== group) {
+      try {
+        const chkFlow = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(flowKey)}&select=id`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        const existFlow = await chkFlow.json();
+        if (!Array.isArray(existFlow) || existFlow.length === 0) {
+          const baseFlow = (window.cachedGroupFlows && (window.cachedGroupFlows[flowKey] || window.cachedGroupFlows[group])) || [];
+          if (baseFlow.length > 0) {
+            const roundFlowPayload = baseFlow.map(item => ({
+              group_id: flowKey,
+              station_id: item.station_id,
+              station_name: item.station_name || item.station_id,
+              next_station_id: item.next_station_id || null
+            }));
+            localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(roundFlowPayload));
+            await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+              method: "POST",
+              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify(roundFlowPayload)
+            });
+          }
+        }
+      } catch (e) {}
+    }
+
     await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
       method: "PATCH",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
     });
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
-    const flowKey = getFlowKeyForRound(group, viewRound);
     const groupRaw = (flowKey && allRaw[flowKey]) ? allRaw[flowKey] : (allRaw[group] || {});
     for (const [stKey, cfg] of Object.entries(groupRaw)) {
       if (!cfg) continue;
@@ -808,11 +835,24 @@ async function resetGroupWipForNewRound(group, viewRound) {
       });
       if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
         const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey + "_LIMIT")}`, {
-          method: "PATCH",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ input_wip: stLim, output_wip: 0, updated_at: new Date().toISOString() })
+        const limStId = `${stKey}_LIMIT`;
+        const checkLim = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(limStId)}&select=id`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
         });
+        const existingLim = await checkLim.json();
+        if (Array.isArray(existingLim) && existingLim.length > 0) {
+          await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingLim[0].id}`, {
+            method: "PATCH",
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ input_wip: stLim, output_wip: 0, updated_at: new Date().toISOString() })
+          });
+        } else {
+          await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+            method: "POST",
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ group_id: group, station_id: limStId, input_wip: stLim, output_wip: 0 })
+          });
+        }
       }
       if (cfg.hasRaw) {
         const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);

@@ -818,81 +818,56 @@ async function upsertCloudWipRecord(targetGrp, stId, inVal, outVal, keepExisting
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (同時寫入基準組別 G20 與場次專屬代號如 G20-T1 / G20-T2 / G20-OFFICIAL，讓 Table 一眼看出是第幾次測試)
+// 重置指定組別的 station_wip 在製品庫存 (僅針對開啟之該場次代號如 G20-T2 單一寫入，不自動無中生有產生 G20-T1、也不重複寫入無後綴的 G20)
 async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
     const flowKey = getFlowKeyForRound(group, viewRound);
+    if (!flowKey) return;
 
-    // 0. 若切換至第 2~10 次測試或正式實作，且第 1 次測試 (G20-T1) 在 station_wip 尚未有獨立快照，先將目前 G20 的 station_wip 快照封存至 G20-T1
-    const t1Key = `${group}-T1`;
-    if (flowKey && flowKey !== t1Key) {
-      try {
-        const chkT1Wip = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(t1Key)}&select=id`, {
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-        });
-        const existT1Wip = await chkT1Wip.json();
-        if (!Array.isArray(existT1Wip) || existT1Wip.length === 0) {
-          const baseWipRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&select=station_id,input_wip,output_wip`, {
-            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+    // 1. 確保雲端 station_flow 僅建立目前開啟之該場次 (flowKey，如 G20-T2) 的流程紀錄，並清理無後綴的重複 group 紀錄
+    try {
+      const chkFlow = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(flowKey)}&select=id`, {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      const existFlow = await chkFlow.json();
+      if (!Array.isArray(existFlow) || existFlow.length === 0) {
+        const baseFlow = (window.cachedGroupFlows && (window.cachedGroupFlows[flowKey] || window.cachedGroupFlows[group])) || [];
+        if (baseFlow.length > 0) {
+          const roundFlowPayload = baseFlow.map(item => ({
+            group_id: flowKey,
+            station_id: item.station_id,
+            station_name: item.station_name || item.station_id,
+            next_station_id: item.next_station_id || null
+          }));
+          localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(roundFlowPayload));
+          await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+            method: "POST",
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(roundFlowPayload)
           });
-          const baseWipRows = await baseWipRes.json();
-          if (Array.isArray(baseWipRows)) {
-            const t1WipPayload = baseWipRows
-              .filter(r => r.station_id && r.station_id !== "SYSTEM_MODE" && r.station_id !== "GROUP_MODE")
-              .map(r => ({
-                group_id: t1Key,
-                station_id: r.station_id,
-                input_wip: r.input_wip || 0,
-                output_wip: r.output_wip || 0
-              }));
-            if (t1WipPayload.length > 0) {
-              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-                method: "POST",
-                headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-                body: JSON.stringify(t1WipPayload)
-              });
-            }
-          }
         }
-      } catch (e) {}
-    }
-
-    // 若切換至新場次 (例如 G20-T2)，確保雲端 station_flow 也同步建立該場次的流程紀錄
-    if (flowKey && flowKey !== group) {
-      try {
-        const chkFlow = await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(flowKey)}&select=id`, {
+      }
+      if (flowKey !== group) {
+        await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+          method: "DELETE",
           headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
         });
-        const existFlow = await chkFlow.json();
-        if (!Array.isArray(existFlow) || existFlow.length === 0) {
-          const baseFlow = (window.cachedGroupFlows && (window.cachedGroupFlows[flowKey] || window.cachedGroupFlows[group])) || [];
-          if (baseFlow.length > 0) {
-            const roundFlowPayload = baseFlow.map(item => ({
-              group_id: flowKey,
-              station_id: item.station_id,
-              station_name: item.station_name || item.station_id,
-              next_station_id: item.next_station_id || null
-            }));
-            localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(roundFlowPayload));
-            await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
-              method: "POST",
-              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify(roundFlowPayload)
-            });
-          }
-        }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
-    const targetGroups = Array.from(new Set([group, flowKey].filter(Boolean)));
-    for (const tGrp of targetGroups) {
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(tGrp)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+    // 2. 清理無後綴 group 在 station_wip 的重複工站資料列 (僅保留 GROUP_MODE / SYSTEM_MODE)，並重置當前開啟場次 flowKey 的庫存
+    if (flowKey !== group) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
       });
     }
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(flowKey)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
+      method: "PATCH",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+    });
 
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
     const groupRaw = (flowKey && allRaw[flowKey]) ? allRaw[flowKey] : (allRaw[group] || {});
@@ -901,16 +876,14 @@ async function resetGroupWipForNewRound(group, viewRound) {
       const initSub = (!cfg.isRoot && cfg.subInit !== undefined && cfg.subInit !== null)
         ? Math.max(0, parseInt(cfg.subInit, 10) || 0)
         : 0;
-      for (const tGrp of targetGroups) {
-        await upsertCloudWipRecord(tGrp, stKey, initSub, 0, false);
-        if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
-          const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
-          await upsertCloudWipRecord(tGrp, `${stKey}_LIMIT`, stLim, 0, false);
-        }
-        if (cfg.hasRaw) {
-          const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
-          await upsertCloudWipRecord(tGrp, `${stKey}_RAW`, initRaw, 0, false);
-        }
+      await upsertCloudWipRecord(flowKey, stKey, initSub, 0, false);
+      if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
+        const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
+        await upsertCloudWipRecord(flowKey, `${stKey}_LIMIT`, stLim, 0, false);
+      }
+      if (cfg.hasRaw) {
+        const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
+        await upsertCloudWipRecord(flowKey, `${stKey}_RAW`, initRaw, 0, false);
       }
     }
   } catch (e) {}
@@ -1622,6 +1595,35 @@ async function fetchAndResolveFlowsForRound(group, viewRound) {
     window.cachedGroupFlows[k] = byKey[k];
   });
 
+  // 若目前開啟之場次 flowKey 已有紀錄，自動清理無後綴的重複 group 紀錄；若尚未有 flowKey 且有舊版無後綴 group 紀錄，自動遷移至 flowKey 並清理
+  if (vr.isLive && flowKey && flowKey !== group && byKey[group] && byKey[group].length > 0) {
+    if (byKey[flowKey] && byKey[flowKey].length > 0) {
+      fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      }).catch(() => {});
+    } else {
+      const migrated = byKey[group].map(item => ({
+        group_id: flowKey,
+        station_id: item.station_id,
+        station_name: item.station_name || item.station_id,
+        next_station_id: item.next_station_id || null
+      }));
+      byKey[flowKey] = migrated;
+      window.cachedGroupFlows[flowKey] = migrated;
+      fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(migrated)
+      }).then(() => {
+        fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+          method: "DELETE",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+  }
+
   // 候選查找順序：1. 該場次專屬 flowKey -> 2. 前序測試場次 -> 3. 組別基準 group
   const candidateKeys = [flowKey];
   if (vr.mode === "TEST" && vr.round > 1) {
@@ -1916,31 +1918,38 @@ async function renderFlowDiagram(group, forceRender = false) {
     if (st) roundOutMap[st] = (roundOutMap[st] || 0) + 1;
   });
 
-  // 優先整理基準 group 與場次專屬 flowKey (如 G20-T1 / G20-T2) 的 station_wip 資料
-  const baseWips = wips.filter(w => (w.group_id || "").trim() === group);
+  // 優先整理場次專屬 flowKey (如 G20-T2) 的 station_wip 資料；若有舊版無後綴 group 資料則自動遷移至 flowKey 並清除重複列
+  const baseWips = wips.filter(w => (w.group_id || "").trim() === group && w.station_id !== "SYSTEM_MODE" && w.station_id !== "GROUP_MODE");
   const roundWips = wips.filter(w => (w.group_id || "").trim() === flowKey);
 
-  // 若目前檢視進行中場次 (isLive) 且雲端 station_wip 尚未有 flowKey (如 G20-T2) 的資料列，自動背景補齊讓後台 Table 一眼看出是第幾次測試
-  if (viewRound.isLive && flowKey && flowKey !== group && roundWips.length === 0 && baseWips.length > 0) {
-    const syncRows = baseWips
-      .filter(r => r.station_id && r.station_id !== "SYSTEM_MODE" && r.station_id !== "GROUP_MODE")
-      .map(r => ({
+  if (viewRound.isLive && flowKey && flowKey !== group && baseWips.length > 0) {
+    if (roundWips.length === 0) {
+      const syncRows = baseWips.map(r => ({
         group_id: flowKey,
         station_id: r.station_id,
         input_wip: r.input_wip || 0,
         output_wip: roundOutMap[(r.station_id || "").trim()] ?? (r.output_wip || 0)
       }));
-    if (syncRows.length > 0) {
       fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
         method: "POST",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
         body: JSON.stringify(syncRows)
+      }).then(() => {
+        fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
+          method: "DELETE",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        }).catch(() => {});
+      }).catch(() => {});
+    } else {
+      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
       }).catch(() => {});
     }
   }
 
   const wipMap = {};
-  const orderedWips = viewRound.isLive ? [...roundWips, ...baseWips] : [...baseWips, ...roundWips];
+  const orderedWips = [...baseWips, ...roundWips];
   orderedWips.forEach(w => {
     const stKey = (w.station_id || "").trim();
     wipMap[stKey] = {
@@ -1997,9 +2006,9 @@ async function renderFlowDiagram(group, forceRender = false) {
       ? cfgSub
       : ((!isRoot && w.outWip === 0 && hasCfgSub) ? cfgSub : Math.max(w.inWip || 0, cfgSub));
 
-    // 若為目前進行中場次、尚未開工且雲端 input_wip 與設定值不同，自動背景同步至雲端資料庫
+    // 若為目前進行中場次、尚未開工且雲端 input_wip 與設定值不同，自動背景同步至雲端資料庫 (僅更新 flowKey)
     if (viewRound.isLive && !isRoot && w.outWip === 0 && hasCfgSub && (w.inWip || 0) !== cfgSub) {
-      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stId)}`, {
+      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(flowKey)}&station_id=eq.${encodeURIComponent(stId)}`, {
         method: "PATCH",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ input_wip: cfgSub, updated_at: new Date().toISOString() })
@@ -2473,37 +2482,21 @@ async function saveCustomFlow() {
   localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(allRaw));
 
   try {
-    // 🛡️ 若目前修改的是第 2~10 次測試或正式實作，且第 1 次測試 (`${group}-T1`) 尚未獨立封存，先將原本舊的 `${group}` 流程自動快照封存至 `${group}-T1`，確保第 1 次測試流程圖 100% 不被覆蓋！
-    if (flowKey !== `${group}-T1`) {
-      const t1Key = `${group}-T1`;
-      const existingT1 = window.cachedGroupFlows && window.cachedGroupFlows[t1Key];
-      const existingBase = window.cachedGroupFlows && window.cachedGroupFlows[group];
-      if ((!existingT1 || existingT1.length === 0) && Array.isArray(existingBase) && existingBase.length > 0) {
-        const t1Snapshot = existingBase.map(item => ({
-          group_id: t1Key,
-          station_id: item.station_id,
-          station_name: item.station_name || item.station_id,
-          next_station_id: item.next_station_id || null
-        }));
-        localStorage.setItem(`ie_chair_flow_backup_${t1Key}`, JSON.stringify(t1Snapshot));
-        await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(t1Key)}`, {
-          method: "DELETE",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-        });
-        await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
-          method: "POST",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify(t1Snapshot)
-        });
-      }
-    }
-
-    // 🛡️ 寫入該場次專屬的本地備份與雲端 station_flow (group_id = flowKey)
+    // 🛡️ 僅寫入當前開啟之該場次專屬 station_flow (group_id = flowKey，例如 G20-T2)，不自動產生未開啟之場次，並清理無後綴的重複 group 紀錄
     localStorage.setItem(`ie_chair_flow_backup_${flowKey}`, JSON.stringify(payload));
+    if (viewRound.isLive) {
+      localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(payload));
+    }
     await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(flowKey)}`, {
       method: "DELETE",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     });
+    if (flowKey !== group) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+    }
     const postRes = await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
       method: "POST",
       headers: {
@@ -2518,23 +2511,6 @@ async function saveCustomFlow() {
       throw new Error(`雲端寫入失敗 (${postRes.status}): ${errText}`);
     }
 
-    // 若編輯的是當前進行中的場次，同步更新基準 group_id，讓現場手機與桌牌頁面也能無縫取得最新場次流程
-    if (viewRound.isLive) {
-      localStorage.setItem(`ie_chair_flow_backup_${group}`, JSON.stringify(basePayload));
-      await fetch(`${SUPABASE_URL}/rest/v1/station_flow?group_id=eq.${encodeURIComponent(group)}`, {
-        method: "DELETE",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      });
-      await fetch(`${SUPABASE_URL}/rest/v1/station_flow`, {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(basePayload)
-      });
-    }
-
     closeFlowModal();
     const clearOld = confirm(`✓ 【${group} - ${viewRound.label}】的專屬流程圖已成功儲存！（其他場次的流程圖不受影響）\n\n💡 建議：是否要一併清空【${group}】在【${viewRound.label}】的舊紀錄與庫存，以全新狀態開始計時？\n（點擊「確定」僅重置本場次紀錄；點擊「取消」保留目前紀錄）`);
     if (clearOld) {
@@ -2543,31 +2519,32 @@ async function saveCustomFlow() {
       } catch(e) {}
     }
 
-    // 🌟 同步更新該場次專屬代號 (如 G20-T1 / G20-T2 / G20-OFFICIAL) 與進行中基準組別 (G20) 的 station_wip
+    // 🌟 僅寫入該場次專屬代號 (flowKey，如 G20-T2) 的 station_wip，並清除無後綴 group 的重複工站列
     try {
-      const targetWipGroups = viewRound.isLive
-        ? Array.from(new Set([group, flowKey].filter(Boolean)))
-        : [flowKey];
+      if (flowKey !== group) {
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
+          method: "DELETE",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+      }
 
       for (const st of activeStations) {
         const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
         const isRoot = preds.length === 0;
         const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 0);
 
-        for (const tGrp of targetWipGroups) {
-          await upsertCloudWipRecord(tGrp, st, initialInput, 0, !clearOld);
+        await upsertCloudWipRecord(flowKey, st, initialInput, 0, !clearOld);
 
-          // 若為後續工站 (前一站是半成品進入)，同步寫入本站專屬半成品 WIP 上限 (${st}_LIMIT)
-          if (!isRoot) {
-            const stMaxWip = newGroupRaw[st]?.maxWip ?? 0;
-            await upsertCloudWipRecord(tGrp, `${st}_LIMIT`, stMaxWip, 0, false);
-          }
+        // 若為後續工站 (前一站是半成品進入)，同步寫入本站專屬半成品 WIP 上限 (${st}_LIMIT)
+        if (!isRoot) {
+          const stMaxWip = newGroupRaw[st]?.maxWip ?? 0;
+          await upsertCloudWipRecord(flowKey, `${st}_LIMIT`, stMaxWip, 0, false);
+        }
 
-          // 若有附加專屬零件，同步更新 ${st}_RAW
-          if (newGroupRaw[st]?.hasRaw) {
-            const rawInit = newGroupRaw[st].rawInit || 0;
-            await upsertCloudWipRecord(tGrp, `${st}_RAW`, rawInit, 0, false);
-          }
+        // 若有附加專屬零件，同步更新 ${st}_RAW
+        if (newGroupRaw[st]?.hasRaw) {
+          const rawInit = newGroupRaw[st].rawInit || 0;
+          await upsertCloudWipRecord(flowKey, `${st}_RAW`, rawInit, 0, false);
         }
       }
     } catch(errWip) {

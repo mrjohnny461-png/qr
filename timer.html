@@ -730,38 +730,36 @@ function updateCooldownBadgeUI() {
   }
 }
 
-// 輔助函式：將 station_wip 同時寫入基準組別 (如 G20) 與目前場次專屬代號 (如 G20-T1 / G20-T2 / G20-OFFICIAL)
+// 輔助函式：將 station_wip 僅寫入目前開啟之場次專屬代號 (如 G20-T1 / G20-T2 / G20-OFFICIAL)，不重複寫入無後綴的基準組別
 async function upsertTimerCloudWipForCurrentRound(stId, inVal, outVal) {
   const fk = getCurrentFlowKey();
-  const targets = Array.from(new Set([groupId, fk].filter(Boolean)));
-  for (const tGrp of targets) {
-    try {
-      const checkRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(tGrp)}&station_id=eq.${encodeURIComponent(stId)}&select=id`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
-      );
-      const existing = await checkRes.json();
-      if (Array.isArray(existing) && existing.length > 0) {
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
-          method: "PATCH",
-          headers: {
-            apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
-        });
-      } else {
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-          method: "POST",
-          headers: {
-            apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ group_id: tGrp, station_id: stId, input_wip: inVal, output_wip: outVal })
-        });
-      }
-    } catch (e) {}
-  }
+  if (!fk) return;
+  try {
+    const checkRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(stId)}&select=id`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const existing = await checkRes.json();
+    if (Array.isArray(existing) && existing.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input_wip: inVal, output_wip: outVal, updated_at: new Date().toISOString() })
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ group_id: fk, station_id: stId, input_wip: inVal, output_wip: outVal })
+      });
+    }
+  } catch (e) {}
 }
 
 // 🛑 各站自行決定並同步更新「本站半成品 WIP 上限」(僅適用於前一站是半成品進入之後續工站)
@@ -965,11 +963,12 @@ async function updateFlowInfo() {
   }
 }
 
-// 讀取本站自己的 station_wip 紀錄
+// 讀取本站自己的 station_wip 紀錄 (以目前開啟場次代號如 G20-T2 為主)
 async function fetchWipData() {
+  const fk = getCurrentFlowKey();
   // 1. 讀取本站主要 station_wip
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${stationId}&select=*`,
+    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(stationId)}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
   );
   const data = await res.json();
@@ -993,7 +992,7 @@ async function fetchWipData() {
         apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
         "Content-Type": "application/json", Prefer: "return=representation"
       },
-      body: JSON.stringify({ group_id: groupId, station_id: stationId, input_wip: initialInput, output_wip: 0 })
+      body: JSON.stringify({ group_id: fk, station_id: stationId, input_wip: initialInput, output_wip: 0 })
     });
     const created = await insertRes.json();
     wipRecordId = created[0].id;
@@ -1005,7 +1004,7 @@ async function fetchWipData() {
   if (isMixedStation()) {
     const rawStId = `${stationId}_RAW`;
     const rawRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&station_id=eq.${rawStId}&select=*`,
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(rawStId)}&select=*`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     const rawData = await rawRes.json();
@@ -1019,7 +1018,7 @@ async function fetchWipData() {
           apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
           "Content-Type": "application/json", Prefer: "return=representation"
         },
-        body: JSON.stringify({ group_id: groupId, station_id: rawStId, input_wip: rawInitCount, output_wip: 0 })
+        body: JSON.stringify({ group_id: fk, station_id: rawStId, input_wip: rawInitCount, output_wip: 0 })
       });
       const createdRaw = await insertRawRes.json();
       rawWipRecordId = createdRaw[0].id;
@@ -1031,39 +1030,27 @@ async function fetchWipData() {
   if (!isRootStation) {
     try {
       const limitStId = `${stationId}_LIMIT`;
-      const fk = getCurrentFlowKey();
       const limRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/station_wip?group_id=in.(${encodeURIComponent(groupId)},${encodeURIComponent(fk)})&station_id=eq.${encodeURIComponent(limitStId)}&select=*`,
+        `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(limitStId)}&select=*`,
         { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
       );
       const limData = await limRes.json();
       if (Array.isArray(limData) && limData.length > 0) {
-        const roundRow = limData.find(r => r.group_id === fk) || limData[0];
-        myStationMaxWip = Math.max(0, parseInt(roundRow.input_wip, 10) || 0);
-        if (!limData.some(r => r.group_id === fk)) {
-          await upsertTimerCloudWipForCurrentRound(limitStId, myStationMaxWip, 0);
-        }
+        myStationMaxWip = Math.max(0, parseInt(limData[0].input_wip, 10) || 0);
       } else if (myStationMaxWip > 0) {
         await upsertTimerCloudWipForCurrentRound(limitStId, myStationMaxWip, 0);
       }
       updateCooldownBadgeUI();
     } catch (e) {}
   }
-
-  // 4. 確保本站主要 WIP 與原生零件也同步有一份場次專屬代號 (如 G20-T2) 的紀錄
-  try {
-    await upsertTimerCloudWipForCurrentRound(stationId, manualBufferWip, currentOutWip);
-    if (isMixedStation()) {
-      await upsertTimerCloudWipForCurrentRound(`${stationId}_RAW`, rawPartStock, 0);
-    }
-  } catch (e) {}
 }
 
 // 🌟 核心計算：萬能齊套約束（BOM 1:1）與 各站獨立半成品 WIP 上限滿載阻擋 (Blocking) 計算
 async function computeKitting() {
-  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據，同時供起始站與下游站計算站後待領在庫量與各站獨立 WIP 上限)
+  const fk = getCurrentFlowKey();
+  // 抓取目前場次全組 station_wip (如 G20-T2)
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&select=*`,
+    `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
   );
   const allWipsJson = await res.json();
@@ -1547,6 +1534,7 @@ async function autoSyncLive() {
             } catch(e) {}
             updateModeBadgeUI();
             await updateFlowInfo();
+            await fetchWipData();
             if (!isWorking) await syncHistoryFromDb();
           }
           if (decodedCd.startCd !== currentCooldownSec || decodedCd.finishCd !== currentFinishCooldownSec || decodedCd.maxWip !== currentMaxWip) {
@@ -1564,8 +1552,9 @@ async function autoSyncLive() {
       }
     } catch(e) {}
 
+    const fk = getCurrentFlowKey();
     const wipRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(stationId)}&select=id,input_wip,output_wip`,
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(stationId)}&select=id,input_wip,output_wip`,
       { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
     );
     const wipData = await wipRes.json();
@@ -2755,7 +2744,8 @@ async function syncHistoryFromDb() {
     // 🛡️ 以當前場次 (第 1~10 次測試或正式實作) 的真實完工筆數作為 currentOutWip，確保切換場次時各場次數據獨立且與工蓋螢幕 100% 同步
     if (currentOutWip !== modeEvents.length) {
       currentOutWip = modeEvents.length;
-      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(stationId)}`, {
+      const fk = getCurrentFlowKey();
+      fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(fk)}&station_id=eq.${encodeURIComponent(stationId)}`, {
         method: "PATCH",
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ output_wip: currentOutWip, updated_at: new Date().toISOString() })

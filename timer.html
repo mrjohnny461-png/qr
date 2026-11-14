@@ -610,8 +610,9 @@ if (hasRawPart) {
 }
 
 // 🎯 實作輪次控制 (支援第 1~10 次測試) 與防呆/完工間隔秒數 (由管理員於監控中心設定)
-let currentSystemMode = "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (評分)
-let currentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1; // 1~10 次測試
+const urlRoundParam = (urlParams.get("round") || "").trim().toUpperCase();
+let currentSystemMode = urlRoundParam === "OFFICIAL" ? "OFFICIAL" : "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (評分)
+let currentTestRound = (/^\d+$/.test(urlRoundParam) ? parseInt(urlRoundParam, 10) : parseInt(localStorage.getItem(`ie_chair_test_round_${groupId}`) || localStorage.getItem("ie_chair_test_round") || "1", 10)) || 1; // 1~10 次測試
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工後防呆鎖定秒數 (1~5 秒)
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 掃描完工後冷卻暨起始站第2件起提示間隔秒數 (預設 4 秒，即 3~5 秒)
 let currentMaxWip = 0;          // 已改由各工站獨立設定半成品 WIP 上限，不再使用全體一致預設值

@@ -1019,6 +1019,7 @@
     const params = new URLSearchParams();
     params.set("group", group);
     params.set("station", station);
+    params.set("round", eff.mode === "OFFICIAL" ? "OFFICIAL" : String(eff.round));
     if (partNo) params.set("part", partNo);
 
     let rawTagHtml = "";
@@ -1111,6 +1112,7 @@
       const params = new URLSearchParams();
       params.set("group", group);
       params.set("station", st);
+      params.set("round", eff.mode === "OFFICIAL" ? "OFFICIAL" : String(eff.round));
       if (partNo) params.set("part", partNo);
 
       let tagHtml = "";

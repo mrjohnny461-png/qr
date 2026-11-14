@@ -207,19 +207,6 @@
           <option value="4" selected>4 秒</option>
           <option value="5">5 秒</option>
         </select>
-        <span style="border-left:1px solid #93c5fd; height:14px; margin:0 2px;"></span>
-        <span style="font-size:12px; color:#7e22ce; font-weight:bold;">📦 站間 WIP 上限:</span>
-        <select id="systemMaxWipSelect" onchange="changeSystemCooldown()" style="padding:2px 6px; font-size:12px; font-weight:bold; color:#7e22ce; border-radius:4px; border:1px solid #d8b4fe; background:#fff; cursor:pointer;" title="限制各工站之間的在製品(WIP)最大暫存件數，過滿時自動阻擋禁止再開工或加料（僅管理員可更改）">
-          <option value="0" selected>無限制 (∞)</option>
-          <option value="1">1 件 (單件流)</option>
-          <option value="2">2 件</option>
-          <option value="3">3 件</option>
-          <option value="4">4 件</option>
-          <option value="5">5 件</option>
-          <option value="6">6 件</option>
-          <option value="8">8 件</option>
-          <option value="10">10 件</option>
-        </select>
       </div>
       <button id="groupLinksModalBtn" onclick="openGroupLinksModal()" style="display:none; padding:6px 12px; font-size:12px; font-weight:bold; border-radius:8px; border:1px solid #0284c7; background:#e0f2fe; color:#0369a1; cursor:pointer;" title="產生並複製 G01~G20 各組專屬工蓋螢幕與 QR Code 連結">
         🔗 各組專屬網址清單
@@ -629,11 +616,11 @@ let isSwitchingModeOrRound = false;  // 切換確認進行中鎖定旗標
 let lastLocalModeChangeAt = 0;       // 最近一次本地確認切換時間戳，防止非同步重整舊值覆蓋
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工防呆 1~5 秒
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 完工冷卻/起始間隔 1~5 秒 (預設 4 秒，即 3~5 秒)
-let currentMaxWip = Math.max(0, parseInt(localStorage.getItem("ie_chair_max_wip") || "0", 10) || 0); // 站間 WIP 上限 (0=無限制, 1~99=上限件數)
+let currentMaxWip = 0; // 已改由各工站獨立設定半成品 WIP 上限，不再使用全體一致預設值
 let currentTableFilter = "ALL"; // ALL, OFFICIAL, TEST
 let currentTestRoundFilter = "ALL_TEST"; // ALL_TEST, or "1"~"10"
 
-// 編碼與解碼 SYSTEM_MODE 雲端欄位 (input_wip: 1=正式, 101~110=第1~10次測試; output_wip: WIP上限*10000 + 開工防呆*100 + 完工冷卻)
+// 編碼與解碼 SYSTEM_MODE 雲端欄位 (input_wip: 1=正式, 101~110=第1~10次測試; output_wip: 開工防呆*100 + 完工冷卻)
 function encodeSystemModeInput(mode, round) {
   return mode === 1 ? 1 : (100 + Math.min(10, Math.max(1, parseInt(round, 10) || 1)));
 }
@@ -643,22 +630,20 @@ function decodeSystemModeInput(val) {
   if (n >= 101 && n <= 110) return { mode: 0, round: n - 100 };
   return { mode: 0, round: 1 };
 }
-function encodeSystemCooldownOutput(startCd, finishCd, maxWip) {
+function encodeSystemCooldownOutput(startCd, finishCd) {
   const s = Math.min(5, Math.max(1, parseInt(startCd, 10) || 3));
   const f = Math.min(5, Math.max(1, parseInt(finishCd, 10) || 4));
-  const m = Math.min(99, Math.max(0, parseInt(maxWip !== undefined ? maxWip : currentMaxWip, 10) || 0));
-  return m * 10000 + s * 100 + f;
+  return s * 100 + f;
 }
 function decodeSystemCooldownOutput(val) {
   const n = parseInt(val, 10) || 304;
-  const m = Math.min(99, Math.max(0, Math.floor(n / 10000)));
   const rem = n % 10000;
   if (rem >= 100) {
     const s = Math.min(5, Math.max(1, Math.floor(rem / 100)));
     const f = Math.min(5, Math.max(1, rem % 100));
-    return { startCd: s, finishCd: f, maxWip: m };
+    return { startCd: s, finishCd: f, maxWip: 0 };
   }
-  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: m };
+  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: 0 };
 }
 
 // 判斷 product_id 是否為測試紀錄，以及屬於第幾次測試 (1~10)
@@ -689,12 +674,10 @@ function updateModeButtonsUI() {
   const readonlyBadge = document.getElementById("readonlyModeBadge");
   const cdSelect = document.getElementById("systemCooldownSelect");
   const fcdSelect = document.getElementById("systemFinishCooldownSelect");
-  const mwSelect = document.getElementById("systemMaxWipSelect");
 
   if (cdSelect) cdSelect.value = currentCooldownSec;
   if (fcdSelect) fcdSelect.value = currentFinishCooldownSec;
-  if (mwSelect) mwSelect.value = String(currentMaxWip);
-  const wipLimitText = currentMaxWip > 0 ? `｜WIP上限:${currentMaxWip}件` : "";
+  const wipLimitText = "";
   if (roundSelect && document.activeElement !== roundSelect) {
     // 若使用者剛在選單選了第 N 次測試準備按確認，保留使用者選中的值，絕不跳回第 1 次
     const displayRound = (pendingSelectedTestRound !== null) ? pendingSelectedTestRound : currentTestRound;
@@ -801,11 +784,11 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal,
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit，保留歷史 event 數據，且排除 SYSTEM_MODE 與 GROUP_MODE)
+// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit 與各站半成品 WIP 上限 maxWip，保留歷史 event 數據，且排除 SYSTEM_MODE、GROUP_MODE 與 *_LIMIT)
 async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)`, {
+    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
       method: "PATCH",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
@@ -823,6 +806,14 @@ async function resetGroupWipForNewRound(group, viewRound) {
         headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ input_wip: initSub, output_wip: 0, updated_at: new Date().toISOString() })
       });
+      if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
+        const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey + "_LIMIT")}`, {
+          method: "PATCH",
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ input_wip: stLim, output_wip: 0, updated_at: new Date().toISOString() })
+        });
+      }
       if (cfg.hasRaw) {
         const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
         await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey + "_RAW")}`, {
@@ -947,10 +938,10 @@ async function changeSystemMode(newMode) {
   loadAll();
 }
 
-// 管理員專屬：修改開工防呆秒數、完工冷卻/起始間隔秒數與站間 WIP 上限
+// 管理員專屬：修改開工防呆秒數与完工冷卻/起始間隔秒數
 async function changeSystemCooldown() {
   if (!isAdminLoggedIn) {
-    alert("⚠️ 權限不足：防呆、冷卻時間與 WIP 上限僅限管理員修改！");
+    alert("⚠️ 權限不足：防呆與冷卻時間僅限管理員修改！");
     updateModeButtonsUI();
     return;
   }
@@ -958,14 +949,13 @@ async function changeSystemCooldown() {
 
   const cdSelect = document.getElementById("systemCooldownSelect");
   const fcdSelect = document.getElementById("systemFinishCooldownSelect");
-  const mwSelect = document.getElementById("systemMaxWipSelect");
   currentCooldownSec = Math.min(5, Math.max(1, parseInt(cdSelect ? cdSelect.value : "3", 10) || 3));
   currentFinishCooldownSec = Math.min(5, Math.max(1, parseInt(fcdSelect ? fcdSelect.value : "4", 10) || 4));
-  currentMaxWip = Math.min(99, Math.max(0, parseInt(mwSelect ? mwSelect.value : "0", 10) || 0));
+  currentMaxWip = 0;
 
   localStorage.setItem("ie_chair_cooldown_sec", String(currentCooldownSec));
   localStorage.setItem("ie_chair_finish_cooldown_sec", String(currentFinishCooldownSec));
-  localStorage.setItem("ie_chair_max_wip", String(currentMaxWip));
+  localStorage.removeItem("ie_chair_max_wip");
   updateModeButtonsUI();
 
   await upsertSystemModeCloud(currentSystemMode, currentTestRound, currentCooldownSec, currentFinishCooldownSec);
@@ -1930,12 +1920,29 @@ async function renderFlowDiagram(group, forceRender = false) {
       }
     }
 
-    // 2. 計算【站後在庫量】: 本站完工 - 下游站自本站領取之消耗量
+    // 2. 計算【本站站前半成品 WIP 上限 (myInMaxWip)】與【站後送往下游之半成品在庫量 (currentOutBuffer) / 下游滿載阻塞 (isWipBlocked)】
+    // 優先讀取雲端 `${stId}_LIMIT` (讓各站手機或 QR 頁修改後立即生效)，其次讀取本機 rawCfg.maxWip，最後回退預設 currentMaxWip
+    function resolveStationSemiFinishedLimit(targetSt) {
+      if (viewRound.isLive && wipMap[targetSt + "_LIMIT"] !== undefined) {
+        return Math.max(0, parseInt(wipMap[targetSt + "_LIMIT"].inWip, 10) || 0);
+      }
+      const tCfg = getStationRaw(group, targetSt, viewRound);
+      if (tCfg && tCfg.maxWip !== undefined && tCfg.maxWip !== null && tCfg.maxWip !== "") {
+        return Math.max(0, parseInt(tCfg.maxWip, 10) || 0);
+      }
+      return currentMaxWip;
+    }
+
+    const myInMaxWip = isRoot ? 0 : resolveStationSemiFinishedLimit(stId);
     const isFinalStation = successors.length === 0;
     let currentOutBuffer = w.outWip;
+    let effectiveDownMaxWip = 0;
+    let blockedByDownSt = "";
+    let isWipBlocked = false;
 
     if (!isFinalStation) {
-      let downstreamConsumed = 0;
+      let maxBuf = 0;
+      let chosenLim = 0;
       successors.forEach(s => {
         const sWip = wipMap[s] || { inWip: 0, outWip: 0 };
         const sRawCfg = getStationRaw(group, s, viewRound);
@@ -1943,27 +1950,50 @@ async function renderFlowDiagram(group, forceRender = false) {
         const sCfgSub = sHasCfgSub ? Math.max(0, parseInt(sRawCfg.subInit, 10) || 0) : 0;
         const sManualAdded = (sWip.outWip === 0 && sHasCfgSub) ? sCfgSub : Math.max(sWip.inWip || 0, sCfgSub);
         const sFeederConsumed = Math.max(0, (sWip.outWip || 0) - sManualAdded);
-        if (sFeederConsumed > downstreamConsumed) downstreamConsumed = sFeederConsumed;
+        const sRemManual = Math.max(0, sManualAdded - (sWip.outWip || 0));
+        const sBuf = Math.max(0, w.outWip - sFeederConsumed) + sRemManual;
+        const sLim = resolveStationSemiFinishedLimit(s);
+
+        if (sBuf >= maxBuf) {
+          maxBuf = sBuf;
+          chosenLim = sLim;
+        } else if (chosenLim === 0 && sLim > 0) {
+          chosenLim = sLim;
+        }
+
+        if (sLim > 0 && sBuf >= sLim && !blockedByDownSt) {
+          isWipBlocked = true;
+          blockedByDownSt = s;
+          currentOutBuffer = sBuf;
+          effectiveDownMaxWip = sLim;
+        }
       });
-      currentOutBuffer = Math.max(0, w.outWip - downstreamConsumed);
+      if (!isWipBlocked) {
+        currentOutBuffer = maxBuf;
+        effectiveDownMaxWip = chosenLim;
+        blockedByDownSt = successors[0] || "";
+      }
     }
 
-    // 3. 節點標籤呈現
+    // 3. 節點標籤呈現 (WIP 上限僅顯示並套用於「前一站是半成品進入」之工站，零件進入不受限)
+    const subUnit = isMerge ? "套" : "件";
+    const subLimitStr = myInMaxWip > 0 ? `/${myInMaxWip}${subUnit}${totalSub >= myInMaxWip ? '(🛑滿)' : ''}` : `${subUnit}`;
     let inText = "";
     if (isRoot) {
-      inText = "📥 原料: 無限供應";
+      inText = "📥 原料/零件: 無限供應 (無WIP限制)";
     } else if (hasRaw) {
-      inText = (hasRaw && rawName) ? `📥 半成品: ${totalSub}套 ｜ ${rawName}: ${rawStock}件 ➔ 可開工: ${inQty}套` : `📥 半成品: ${totalSub}套 ➔ 可開工: ${inQty}套`;
+      inText = (hasRaw && rawName)
+        ? `📥 半成品: ${totalSub}${subLimitStr} ｜ ${rawName}: ${rawStock}顆(零件不限) ➔ 可開工: ${inQty}套`
+        : `📥 半成品: ${totalSub}${subLimitStr} ➔ 可開工: ${inQty}套`;
     } else {
-      inText = `📥 半成品: ${totalSub}${isMerge ? '套' : '件'} ➔ 可開工: ${inQty}${isMerge ? '套' : '件'}`;
+      inText = `📥 半成品: ${totalSub}${subLimitStr} ➔ 可開工: ${inQty}${subUnit}`;
     }
 
-    const isWipBlocked = (!isFinalStation && currentMaxWip > 0 && currentOutBuffer >= currentMaxWip);
     let outText = "";
     if (isFinalStation) {
       outText = `🏁 總成品: ${w.outWip} 件`;
-    } else if (currentMaxWip > 0) {
-      outText = `📤 累計完工: ${w.outWip} 件 (站後待領: ${currentOutBuffer}/${currentMaxWip} 件${isWipBlocked ? ' 🛑已滿' : ''})`;
+    } else if (effectiveDownMaxWip > 0) {
+      outText = `📤 累計完工: ${w.outWip} 件 (送往${blockedByDownSt}待領: ${currentOutBuffer}/${effectiveDownMaxWip} 件${isWipBlocked ? ' 🛑已滿' : ''})`;
     } else {
       outText = `📤 累計完工: ${w.outWip} 件 (站後待領: ${currentOutBuffer} 件)`;
     }
@@ -1976,7 +2006,7 @@ async function renderFlowDiagram(group, forceRender = false) {
 
     const isBottleneck = (stId === window.currentBottleneckStation && window.currentMaxCycle > 0);
     const bottleneckTag = isBottleneck ? `<br><b style='color:#dc2626;'>🚨 瓶頸站 (CT: ${window.currentMaxCycle.toFixed(1)}s)</b>` : "";
-    const blockedTag = isWipBlocked ? `<br><b style='color:#7e22ce;'>🛑 滿載阻塞 (WIP已達上限 ${currentMaxWip} 件)</b>` : "";
+    const blockedTag = isWipBlocked ? `<br><b style='color:#7e22ce;'>🛑 滿載阻塞 (下游${blockedByDownSt}半成品已達上限 ${effectiveDownMaxWip} 件)</b>` : "";
 
     code += `  ${stId}["<b>${stId}</b>${partTag}<br>${inText}<br>${outText}${blockedTag}${bottleneckTag}"]\n`;
 
@@ -2109,6 +2139,11 @@ function refreshModalRawConfigs(group) {
     if (!tempValues[st]) tempValues[st] = {};
     tempValues[st].subInit = inp.value !== "" ? parseInt(inp.value, 10) : 0;
   });
+  rawContainer.querySelectorAll(".modal-max-wip").forEach(sel => {
+    const st = sel.dataset.station;
+    if (!tempValues[st]) tempValues[st] = {};
+    tempValues[st].maxWip = sel.value !== "" ? parseInt(sel.value, 10) : 0;
+  });
   rawContainer.querySelectorAll(".modal-raw-check").forEach(chk => {
     const st = chk.dataset.station;
     const isChecked = chk.checked;
@@ -2148,30 +2183,37 @@ function refreshModalRawConfigs(group) {
       div.innerHTML = `
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-weight:bold; color:#166534; font-size:14px;">🏁 ${st} 起始工站</span>
-          <span style="font-size:12px; color:#15803d; background:#dcfce7; padding:2px 8px; border-radius:6px; font-weight:600;">🟢 原料無限供應（常駐充足，隨時可開工）</span>
+          <span style="font-size:12px; color:#15803d; background:#dcfce7; padding:2px 8px; border-radius:6px; font-weight:600;">🟢 原料/零件直接進入（無前置半成品，不適用 WIP 上限限制）</span>
         </div>
         <span style="background:#bbf7d0; color:#14532d; font-size:11px; font-weight:bold; padding:3px 10px; border-radius:12px; border:1px solid #86efac; white-space:nowrap;">原料無限 ∞</span>
       `;
     } else {
       const subInitVal = (savedCfg.subInit !== undefined && savedCfg.subInit !== null) ? Math.max(0, parseInt(savedCfg.subInit, 10) || 0) : 0;
+      const maxWipVal = (savedCfg.maxWip !== undefined && savedCfg.maxWip !== null) ? Math.max(0, parseInt(savedCfg.maxWip, 10) || 0) : 0;
+      const maxWipOpts = [0, 1, 2, 3, 4, 5, 6, 8, 10].map(v =>
+        `<option value="${v}" ${maxWipVal === v ? "selected" : ""}>${v === 0 ? "無限制 (∞)" : `${v} 套 (滿載阻擋)`}</option>`
+      ).join("");
       div.style.cssText = "background:#fff; border:1px solid #fcd34d; border-radius:8px; padding:10px 14px; display:flex; flex-direction:column; gap:8px; box-sizing:border-box;";
       div.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:bold; color:#1e293b; font-size:13px;">🧩 ${st} 後續工站</span>
+          <span style="font-weight:bold; color:#1e293b; font-size:13px;">🧩 ${st} 後續工站（前一站是半成品進入）</span>
           <span style="font-size:11px; color:#b45309; background:#fef3c7; padding:2px 8px; border-radius:4px; font-weight:bold; border:1px solid #fde68a;">需前置工站：${preds.join(" + ")}</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px; background:#fffbeb; padding:6px 10px; border-radius:6px; border:1px solid #fef08a; flex-wrap:wrap;">
-          <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 站前半成品初始備料（選填，可為 0）：</span>
+          <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 站前半成品初始備料：</span>
           <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:0 6px; box-sizing:border-box;">
             <input type="number" id="modalSubInit_${st}" class="modal-sub-init" data-station="${st}" value="${subInitVal}" min="0" placeholder="0" style="border:none; outline:none; width:45px; padding:4px 0; font-size:13px; text-align:right; font-weight:bold; color:#1e40af;">
             <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:3px; white-space:nowrap;">套</span>
           </div>
-          <span style="font-size:11px; color:#64748b;">(可設為 0 或任意套數；設定後流程圖與計時器立即同步)</span>
+          <span style="font-size:12px; font-weight:bold; color:#7e22ce; white-space:nowrap; margin-left:6px;">🛑 本站半成品 WIP 上限：</span>
+          <select id="modalMaxWip_${st}" class="modal-max-wip" data-station="${st}" style="padding:4px 8px; font-size:12px; font-weight:bold; color:#7e22ce; border:1px solid #d8b4fe; border-radius:6px; background:#faf5ff; cursor:pointer;">
+            ${maxWipOpts}
+          </select>
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <input type="checkbox" id="modalRawCheck_${st}" class="modal-raw-check" data-station="${st}" ${hasRaw ? "checked" : ""} style="cursor:pointer; width:14px; height:14px; margin:0;">
           <label for="modalRawCheck_${st}" style="font-size:12px; color:#475569; cursor:pointer; margin:0; font-weight:600;">
-            ＋ 附加站前專屬零件 (選填，如螺絲料盒)
+            ＋ 附加站前專屬零件 (選填，如螺絲料盒；零件進入不受 WIP 上限限制)
           </label>
         </div>
         <div id="modalRawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; align-items:center; gap:6px; margin-left:20px; font-size:12px; flex-wrap:wrap; background:#f8fafc; padding:6px 10px; border-radius:6px; border:1px solid #e2e8f0;">
@@ -2285,10 +2327,15 @@ async function saveCustomFlow() {
     const isRoot = preds.length === 0;
 
     let subInitVal = 0;
+    let maxWipVal = 0;
     if (!isRoot) {
       const subInp = document.getElementById(`modalSubInit_${st}`);
       const parsed = (subInp && subInp.value !== "") ? parseInt(subInp.value, 10) : 0;
       subInitVal = (!isNaN(parsed) && parsed >= 0) ? parsed : 0;
+
+      const maxSel = document.getElementById(`modalMaxWip_${st}`);
+      const parsedMax = (maxSel && maxSel.value !== "") ? parseInt(maxSel.value, 10) : 0;
+      maxWipVal = (!isNaN(parsedMax) && parsedMax >= 0) ? parsedMax : 0;
     }
 
     const chk = document.getElementById(`modalRawCheck_${st}`);
@@ -2299,6 +2346,7 @@ async function saveCustomFlow() {
     newGroupRaw[st] = {
       isRoot: isRoot,
       subInit: isRoot ? 0 : subInitVal,
+      maxWip: isRoot ? 0 : maxWipVal,
       hasRaw: hasRaw,
       rawName: (hasRaw && nameInput) ? nameInput.value.trim() : "",
       rawInit: rawInitStr !== "" ? (parseInt(rawInitStr, 10) || 0) : ""
@@ -2415,6 +2463,35 @@ async function saveCustomFlow() {
               },
               body: JSON.stringify({ group_id: group, station_id: st, input_wip: initialInput, output_wip: 0 })
             });
+          }
+
+          // 若為後續工站 (前一站是半成品進入)，同步寫入本站專屬半成品 WIP 上限 (${st}_LIMIT)
+          if (!isRoot) {
+            const limitSt = `${st}_LIMIT`;
+            const stMaxWip = newGroupRaw[st]?.maxWip ?? 0;
+            const checkLim = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(limitSt)}&select=id`, {
+              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+            });
+            const existingLim = await checkLim.json();
+            if (Array.isArray(existingLim) && existingLim.length > 0) {
+              await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingLim[0].id}`, {
+                method: "PATCH",
+                headers: {
+                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ input_wip: stMaxWip, output_wip: 0, updated_at: new Date().toISOString() })
+              });
+            } else {
+              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+                method: "POST",
+                headers: {
+                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ group_id: group, station_id: limitSt, input_wip: stMaxWip, output_wip: 0 })
+              });
+            }
           }
 
           // 若有附加專屬零件，同步更新 ${st}_RAW

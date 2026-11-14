@@ -390,6 +390,25 @@
 
   <!-- 4. 站前與站後 WIP 看板 -->
   <div class="card" style="padding: 14px; margin-bottom: 10px;">
+    <!-- 🛑 各站獨立設定「本站半成品 WIP 上限」控制列（僅適用於前一站是半成品進入之後續工站；零件/起始原料進入不適用） -->
+    <div id="stationWipLimitBar" style="margin-bottom:10px; padding:8px 12px; border-radius:10px; background:#faf5ff; border:1px solid #d8b4fe; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+      <div id="stationWipLimitLeft" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <span style="font-size:12px; font-weight:bold; color:#6b21a8;">🛑 本站半成品 WIP 上限：</span>
+        <select id="myStationMaxWipSelect" onchange="updateMyStationMaxWip(this.value)" style="padding:3px 8px; font-size:12px; font-weight:bold; color:#7e22ce; border-radius:6px; border:1px solid #c084fc; background:#fff; cursor:pointer;">
+          <option value="0">無限制 (∞)</option>
+          <option value="1">1 套/件 (單件流)</option>
+          <option value="2">2 套/件</option>
+          <option value="3">3 套/件</option>
+          <option value="4">4 套/件</option>
+          <option value="5">5 套/件</option>
+          <option value="6">6 套/件</option>
+          <option value="8">8 套/件</option>
+          <option value="10">10 套/件</option>
+        </select>
+      </div>
+      <span id="stationWipLimitNote" style="font-size:11px; color:#7e22ce; font-weight:600;">💡 各站自行決定（僅限制前站半成品進入，零件進入不受限）</span>
+    </div>
+
     <!-- 一般工站 (純中間站或起點站) -->
     <div class="wip-grid" id="normalWipGrid">
       <!-- 站前可用/備料 -->
@@ -537,6 +556,20 @@ if (isNaN(subInitCount)) {
 }
 if (isNaN(subInitCount) || subInitCount < 0) subInitCount = 0;
 
+// 🛑 取得本站專屬「站前半成品 WIP 上限」(各站自行決定；僅適用於前一站是半成品進入之後續工站，0=無限制 ∞)
+let myStationMaxWip = parseInt(urlParams.get("max_wip") || "", 10);
+if (isNaN(myStationMaxWip)) {
+  try {
+    const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+    const groupRaw = allRaw[groupId] || {};
+    const stRaw = groupRaw[stationId] || {};
+    if (stRaw.maxWip !== undefined && stRaw.maxWip !== null && stRaw.maxWip !== "") {
+      myStationMaxWip = parseInt(stRaw.maxWip, 10);
+    }
+  } catch (e) {}
+}
+if (isNaN(myStationMaxWip) || myStationMaxWip < 0) myStationMaxWip = 0;
+
 if (!hasRawPart) {
   try {
     if (!localStorage.getItem("ie_chair_raw_clean_v3")) {
@@ -581,9 +614,11 @@ let currentSystemMode = "TEST"; // TEST: 測試練習, OFFICIAL: 正式實作 (�
 let currentTestRound = parseInt(localStorage.getItem("ie_chair_test_round") || "1", 10) || 1; // 1~10 次測試
 let currentCooldownSec = parseInt(localStorage.getItem("ie_chair_cooldown_sec") || "3", 10) || 3; // 開工後防呆鎖定秒數 (1~5 秒)
 let currentFinishCooldownSec = parseInt(localStorage.getItem("ie_chair_finish_cooldown_sec") || "4", 10) || 4; // 掃描完工後冷卻暨起始站第2件起提示間隔秒數 (預設 4 秒，即 3~5 秒)
-let currentMaxWip = Math.max(0, parseInt(localStorage.getItem("ie_chair_max_wip") || "0", 10) || 0); // 站間 WIP 上限 (0=無限制, 1~99=最大暫存件數)
+let currentMaxWip = 0;          // 已改由各工站獨立設定半成品 WIP 上限，不再使用全體一致預設值
+let effectiveOutMaxWip = 0;     // 下游工站設定之站前半成品 WIP 上限 (用於判斷本站送往下一站的半成品是否已滿載阻塞)
+let blockedDownstreamSt = "";   // 造成本站滿載阻塞的下游工站代號
 let currentOutBuffer = 0;       // 本站站後待領在庫量 (本站已完工數 - 下游已消耗數)
-let isWipBlocked = false;       // 是否因站後待領達 WIP 上限而處於滿載阻塞狀態
+let isWipBlocked = false;       // 是否因站後待領達下游半成品 WIP 上限而處於滿載阻塞狀態
 let prevWipBlocked = false;     // 前次滿載阻塞狀態，用於偵測下游消化後自動解除阻塞並響音
 let prevKitCount = null;        // 前次齊套數，用於偵測料到瞬間立即觸發提示音
 let pendingMaterialChime = false; // 若料到時瀏覽器音效尚未解鎖，解鎖瞬間立即補響
@@ -591,7 +626,7 @@ let lastMaterialChimeTime = 0;  // 上次料到提示音時間戳 (用於待命�
 let rootWaitingNextChime = false; // 起始站第2件起，等待完工後 3~5 秒間隔結束再發出到料提示音
 let overtimeAlertPlayed = false;// 超時 5 分鐘警示防呆
 
-// 編碼與解碼 SYSTEM_MODE 雲端欄位 (output_wip: WIP上限*10000 + 開工防呆*100 + 完工冷卻)
+// 編碼與解碼 SYSTEM_MODE 雲端欄位 (output_wip: 開工防呆*100 + 完工冷卻)
 function encodeSystemModeInput(modeStr, round) {
   return modeStr === "OFFICIAL" ? 1 : (100 + Math.min(10, Math.max(1, parseInt(round, 10) || 1)));
 }
@@ -601,22 +636,20 @@ function decodeSystemModeInput(val) {
   if (n >= 101 && n <= 110) return { mode: "TEST", round: n - 100 };
   return { mode: "TEST", round: 1 };
 }
-function encodeSystemCooldownOutput(startCd, finishCd, maxWip) {
+function encodeSystemCooldownOutput(startCd, finishCd) {
   const s = Math.min(5, Math.max(1, parseInt(startCd, 10) || 3));
   const f = Math.min(5, Math.max(1, parseInt(finishCd, 10) || 4));
-  const m = Math.min(99, Math.max(0, parseInt(maxWip !== undefined ? maxWip : currentMaxWip, 10) || 0));
-  return m * 10000 + s * 100 + f;
+  return s * 100 + f;
 }
 function decodeSystemCooldownOutput(val) {
   const n = parseInt(val, 10) || 304;
-  const m = Math.min(99, Math.max(0, Math.floor(n / 10000)));
   const rem = n % 10000;
   if (rem >= 100) {
     const s = Math.min(5, Math.max(1, Math.floor(rem / 100)));
     const f = Math.min(5, Math.max(1, rem % 100));
-    return { startCd: s, finishCd: f, maxWip: m };
+    return { startCd: s, finishCd: f, maxWip: 0 };
   }
-  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: m };
+  return { startCd: Math.min(5, Math.max(1, rem || 3)), finishCd: currentFinishCooldownSec || 4, maxWip: 0 };
 }
 
 function isTestProductId(pid) {
@@ -683,9 +716,72 @@ function updateCooldownBadgeUI() {
   const fcb = document.getElementById("finishCooldownBadge");
   if (fcb) fcb.textContent = currentFinishCooldownSec;
   const mwb = document.getElementById("maxWipBadge");
+  const effectiveMyInLimit = isRootStation ? 0 : (myStationMaxWip > 0 ? myStationMaxWip : currentMaxWip);
   if (mwb) {
-    mwb.textContent = currentMaxWip > 0 ? `${currentMaxWip}件` : "∞";
+    if (isRootStation) {
+      mwb.textContent = effectiveOutMaxWip > 0 ? `下游${effectiveOutMaxWip}件` : "∞";
+    } else {
+      mwb.textContent = effectiveMyInLimit > 0 ? `${effectiveMyInLimit}套` : "∞";
+    }
   }
+  const sel = document.getElementById("myStationMaxWipSelect");
+  if (sel && document.activeElement !== sel) {
+    sel.value = String(effectiveMyInLimit);
+  }
+}
+
+// 🛑 各站自行決定並同步更新「本站半成品 WIP 上限」(僅適用於前一站是半成品進入之後續工站)
+async function updateMyStationMaxWip(val) {
+  if (isRootStation) return;
+  const parsed = Math.min(99, Math.max(0, parseInt(val, 10) || 0));
+  myStationMaxWip = parsed;
+
+  // 1. 儲存至本機 localStorage (含目前場次與組別基準)
+  try {
+    const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+    const flowKey = getCurrentFlowKey();
+    [groupId, flowKey].forEach(k => {
+      if (!k) return;
+      if (!allRaw[k]) allRaw[k] = {};
+      if (!allRaw[k][stationId]) allRaw[k][stationId] = {};
+      allRaw[k][stationId].maxWip = parsed;
+    });
+    localStorage.setItem("ie_chair_group_station_raw", JSON.stringify(allRaw));
+  } catch (e) {}
+
+  // 2. 寫入雲端 Supabase station_wip (`${stationId}_LIMIT`)，讓上游工站手機與工蓋螢幕即時同步此站的 WIP 上限
+  try {
+    const limitStId = `${stationId}_LIMIT`;
+    const checkRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(limitStId)}&select=id`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const existing = await checkRes.json();
+    if (Array.isArray(existing) && existing.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input_wip: parsed, output_wip: 0, updated_at: new Date().toISOString() })
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ group_id: groupId, station_id: limitStId, input_wip: parsed, output_wip: 0 })
+      });
+    }
+  } catch (e) {}
+
+  updateCooldownBadgeUI();
+  await computeKitting();
+  const limitLabel = parsed > 0 ? `${parsed} 套/件` : "無限制 (∞)";
+  showScanBanner(`✓ 已將【${stationId}】站前半成品 WIP 上限設定為：${limitLabel}（僅限制半成品，零件進入不受限）`, "success", 3000);
 }
 
 // 取得目前系統場次對應的專屬流程 Key (例如 G01-T1 ~ G01-T10, G01-OFFICIAL)
@@ -830,6 +926,16 @@ async function updateFlowInfo() {
     if (!hasRawPart) {
       document.getElementById("inSubtitle").textContent = "現場零件庫存";
     }
+    const wipBar = document.getElementById("stationWipLimitBar");
+    const wipLeft = document.getElementById("stationWipLimitLeft");
+    const wipNote = document.getElementById("stationWipLimitNote");
+    if (wipBar && wipLeft && wipNote) {
+      wipBar.style.background = "#f0fdf4";
+      wipBar.style.borderColor = "#86efac";
+      wipLeft.innerHTML = `<span style="font-size:12px; font-weight:bold; color:#15803d;">🟢 起始工站（原料/零件直接進入）</span>`;
+      wipNote.style.color = "#166534";
+      wipNote.textContent = "💡 WIP 上限僅適用於「前一站是半成品進入」之工站，零件/原料進入不受限";
+    }
   } else {
     isRootStation = false;
     feederTextEl.textContent = feederStations.length > 0
@@ -912,11 +1018,36 @@ async function fetchWipData() {
       rawPartStock = rawInitCount;
     }
   }
+
+  // 3. 若為非起始站（前一站是半成品進入），同步本站專屬半成品 WIP 上限 (${stationId}_LIMIT)
+  if (!isRootStation) {
+    try {
+      const limitStId = `${stationId}_LIMIT`;
+      const limRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(groupId)}&station_id=eq.${encodeURIComponent(limitStId)}&select=*`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+      );
+      const limData = await limRes.json();
+      if (Array.isArray(limData) && limData.length > 0) {
+        myStationMaxWip = Math.max(0, parseInt(limData[0].input_wip, 10) || 0);
+      } else if (myStationMaxWip > 0) {
+        await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+          method: "POST",
+          headers: {
+            apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ group_id: groupId, station_id: limitStId, input_wip: myStationMaxWip, output_wip: 0 })
+        });
+      }
+      updateCooldownBadgeUI();
+    } catch (e) {}
+  }
 }
 
-// 🌟 核心計算：萬能齊套約束（BOM 1:1）與 站間 WIP 上限滿載阻擋 (Blocking) 計算
+// 🌟 核心計算：萬能齊套約束（BOM 1:1）與 各站獨立半成品 WIP 上限滿載阻擋 (Blocking) 計算
 async function computeKitting() {
-  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據，同時供起始站與下游站計算站後待領在庫量)
+  // 抓取全組 station_wip (與工蓋螢幕完全同步：以 station_wip.input_wip 與 output_wip 為唯一權威依據，同時供起始站與下游站計算站後待領在庫量與各站獨立 WIP 上限)
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${groupId}&select=*`,
     { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
@@ -940,23 +1071,78 @@ async function computeKitting() {
     currentOutWip = wipMap[stationId].output_wip || 0;
   }
 
-  // 📦 計算【本站站後待領在庫量 (currentOutBuffer)】與【滿載阻塞狀態 (isWipBlocked)】
-  // 公式：站後待領數 = max(0, 本站累計完工數 - 下游工站已自本站領取之消耗量)
+  // 同步本站自己設定的站前半成品 WIP 上限 (僅適用於非起始站)
+  if (!isRootStation && wipMap[`${stationId}_LIMIT`] !== undefined) {
+    myStationMaxWip = Math.max(0, parseInt(wipMap[`${stationId}_LIMIT`].input_wip, 10) || 0);
+  }
+
+  // 輔助函式：取得任一下游工站 s 的「站前半成品 WIP 上限」(各站獨立決定，優先讀取雲端 `${s}_LIMIT`，其次讀取本機設定，最後回退預設)
+  function getStationSemiFinishedMaxWip(st) {
+    if (wipMap[`${st}_LIMIT`] !== undefined) {
+      return Math.max(0, parseInt(wipMap[`${st}_LIMIT`].input_wip, 10) || 0);
+    }
+    try {
+      const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
+      const fk = getCurrentFlowKey();
+      const cfg = (allRaw[fk] && allRaw[fk][st]) || (allRaw[groupId] && allRaw[groupId][st]);
+      if (cfg && cfg.maxWip !== undefined && cfg.maxWip !== null && cfg.maxWip !== "") {
+        return Math.max(0, parseInt(cfg.maxWip, 10) || 0);
+      }
+    } catch (e) {}
+    return currentMaxWip;
+  }
+
+  // 📦 計算【本站送往下游之半成品在庫量 (currentOutBuffer)】與【滿載阻塞狀態 (isWipBlocked)】
+  // 每個下游工站 s 皆有「本站半成品進入」，因此依據下游工站 s 自行決定的半成品 WIP 上限來判斷是否滿載阻擋
   const hasDownstream = (successorStations && successorStations.length > 0) || Boolean(nextStationId);
   if (!hasDownstream) {
     currentOutBuffer = currentOutWip;
+    effectiveOutMaxWip = 0;
+    blockedDownstreamSt = "";
     isWipBlocked = false;
   } else {
     const succList = (successorStations && successorStations.length > 0) ? successorStations : [nextStationId];
-    let downstreamConsumed = 0;
+    let maxBuf = 0;
+    let chosenLimit = 0;
+    let blockedSt = "";
+    let blockedBuf = 0;
+    let blockedLim = 0;
+
     succList.forEach(s => {
       const sWip = wipMap[s] || { input_wip: 0, output_wip: 0 };
       const sFeederConsumed = Math.max(0, (sWip.output_wip || 0) - (sWip.input_wip || 0));
-      if (sFeederConsumed > downstreamConsumed) downstreamConsumed = sFeederConsumed;
+      const sRemManual = Math.max(0, (sWip.input_wip || 0) - (sWip.output_wip || 0));
+      // 下游工站 s 目前站前累積的半成品總數 = 本站已產出但 s 尚未消耗之半成品 + s 站前剩餘手動/初始半成品
+      const sSemiFinishedBuffer = Math.max(0, currentOutWip - sFeederConsumed) + sRemManual;
+      const sLimit = getStationSemiFinishedMaxWip(s);
+
+      if (sSemiFinishedBuffer >= maxBuf) {
+        maxBuf = sSemiFinishedBuffer;
+        chosenLimit = sLimit;
+      } else if (chosenLimit === 0 && sLimit > 0) {
+        chosenLimit = sLimit;
+      }
+
+      if (sLimit > 0 && sSemiFinishedBuffer >= sLimit && !blockedSt) {
+        blockedSt = s;
+        blockedBuf = sSemiFinishedBuffer;
+        blockedLim = sLimit;
+      }
     });
-    currentOutBuffer = Math.max(0, currentOutWip - downstreamConsumed);
-    isWipBlocked = (currentMaxWip > 0 && currentOutBuffer >= currentMaxWip);
+
+    if (blockedSt) {
+      isWipBlocked = true;
+      blockedDownstreamSt = blockedSt;
+      currentOutBuffer = blockedBuf;
+      effectiveOutMaxWip = blockedLim;
+    } else {
+      isWipBlocked = false;
+      blockedDownstreamSt = succList[0] || "";
+      currentOutBuffer = maxBuf;
+      effectiveOutMaxWip = chosenLimit;
+    }
   }
+  updateCooldownBadgeUI();
 
   const justUnblocked = (prevWipBlocked === true && !isWipBlocked);
   prevWipBlocked = isWipBlocked;
@@ -978,7 +1164,7 @@ async function computeKitting() {
         const nextPieceNo = currentOutWip + 1;
         showScanBanner(
           justUnblocked
-            ? `🔔 下游已消化半成品（站後待領 ${currentOutBuffer}/${currentMaxWip} 件），阻塞已解除！請掃描 QR Code 開始第 ${nextPieceNo} 件！`
+            ? `🔔 下游【${blockedDownstreamSt || '後站'}】已消化半成品（待領 ${currentOutBuffer}/${effectiveOutMaxWip || '∞'} 件），阻塞已解除！請掃描 QR Code 開始第 ${nextPieceNo} 件！`
             : `🔔 起始工站第 ${nextPieceNo} 件原料已就緒！請掃描 QR Code 開始作業！`,
           "success",
           4000
@@ -1045,7 +1231,7 @@ async function computeKitting() {
       alertMaterialReady();
       showScanBanner(
         justUnblocked
-          ? `🔔 下游已消化半成品（站後待領 ${currentOutBuffer}/${currentMaxWip} 件），請掃描 QR Code 繼續作業！`
+          ? `🔔 下游【${blockedDownstreamSt || '後站'}】已消化半成品（待領 ${currentOutBuffer}/${effectiveOutMaxWip || '∞'} 件），請掃描 QR Code 繼續作業！`
           : `🔔 前站物料已送達（目前可開工：${kitCount} 套）！請掃描 QR Code 開始作業！`,
         "success",
         4000
@@ -1092,13 +1278,14 @@ function refreshUiNumbers() {
       const inTitle = document.getElementById("inTitle");
       const inSub = document.getElementById("inSubtitle");
       if (inTitle) inTitle.textContent = "📥 站前原料";
-      if (inSub) inSub.textContent = "原料狀態";
+      if (inSub) inSub.textContent = "原料/零件進入 (無WIP上限)";
       document.getElementById("wipInText").innerHTML = "<span style='color:#16a34a; font-size:24px; font-weight:bold;'>無限 ∞</span>";
     } else {
       const inTitle = document.getElementById("inTitle");
       const inSub = document.getElementById("inSubtitle");
-      if (inTitle) inTitle.textContent = "📥 站前可用量";
-      if (inSub) inSub.textContent = "可齊套組裝數 (套)";
+      const effInLim = myStationMaxWip > 0 ? myStationMaxWip : currentMaxWip;
+      if (inTitle) inTitle.textContent = "📥 站前可用量 (半成品)";
+      if (inSub) inSub.textContent = effInLim > 0 ? `半成品上限：${effInLim} 套` : "可齊套組裝數 (無上限)";
       document.getElementById("wipInText").textContent = kitCount;
     }
     document.getElementById("wipOutText").textContent = currentOutWip;
@@ -1106,10 +1293,11 @@ function refreshUiNumbers() {
 
   document.getElementById("cycleTotalBadge").textContent = `累計完成：${currentOutWip} 件`;
 
-  // 更新「站後待領在庫量 / WIP 上限」狀態標籤
+  // 更新「站後待領在庫量 / 下游站半成品 WIP 上限」狀態標籤
   const outBufEl = document.getElementById("outBufferStatusText");
   const outBufMixedEl = document.getElementById("outBufferStatusTextMixed");
   const hasDownstream = (successorStations && successorStations.length > 0) || Boolean(nextStationId);
+  const downStName = blockedDownstreamSt || nextStationId || "下游站";
   if (!hasDownstream) {
     if (outBufEl) {
       outBufEl.textContent = `🏁 終點站總成品：${currentOutWip} 件`;
@@ -1119,33 +1307,33 @@ function refreshUiNumbers() {
       outBufMixedEl.textContent = `🏁 成品: ${currentOutWip}`;
       outBufMixedEl.style.color = "#7c3aed";
     }
-  } else if (currentMaxWip > 0) {
+  } else if (effectiveOutMaxWip > 0) {
     if (isWipBlocked) {
       if (outBufEl) {
-        outBufEl.textContent = `🛑 站後待領：${currentOutBuffer} / 上限 ${currentMaxWip} 件 (已滿載阻塞)`;
+        outBufEl.textContent = `🛑 送往 ${downStName} 待領：${currentOutBuffer} / ${downStName}上限 ${effectiveOutMaxWip} 件 (已滿阻塞)`;
         outBufEl.style.color = "#dc2626";
       }
       if (outBufMixedEl) {
-        outBufMixedEl.textContent = `🛑 待領: ${currentOutBuffer}/${currentMaxWip} (已滿)`;
+        outBufMixedEl.textContent = `🛑 ${downStName}待領: ${currentOutBuffer}/${effectiveOutMaxWip} (已滿)`;
         outBufMixedEl.style.color = "#dc2626";
       }
     } else {
       if (outBufEl) {
-        outBufEl.textContent = `📦 站後待領：${currentOutBuffer} / 上限 ${currentMaxWip} 件`;
+        outBufEl.textContent = `📦 送往 ${downStName} 待領：${currentOutBuffer} / ${downStName}上限 ${effectiveOutMaxWip} 件`;
         outBufEl.style.color = "#059669";
       }
       if (outBufMixedEl) {
-        outBufMixedEl.textContent = `📦 待領: ${currentOutBuffer}/${currentMaxWip}`;
+        outBufMixedEl.textContent = `📦 ${downStName}待領: ${currentOutBuffer}/${effectiveOutMaxWip}`;
         outBufMixedEl.style.color = "#059669";
       }
     }
   } else {
     if (outBufEl) {
-      outBufEl.textContent = `📦 站後待領：${currentOutBuffer} 件 (WIP 無上限)`;
+      outBufEl.textContent = `📦 送往 ${downStName} 待領：${currentOutBuffer} 件 (${downStName}無WIP上限)`;
       outBufEl.style.color = "#059669";
     }
     if (outBufMixedEl) {
-      outBufMixedEl.textContent = `📦 待領: ${currentOutBuffer}`;
+      outBufMixedEl.textContent = `📦 待領: ${currentOutBuffer} (∞)`;
       outBufMixedEl.style.color = "#059669";
     }
   }
@@ -1191,11 +1379,11 @@ function refreshUiNumbers() {
     return;
   }
 
-  // 🌟 非計時中：檢查是否因站後待領達 WIP 上限而處於「滿載阻塞 (Blocked)」狀態
+  // 🌟 非計時中：檢查是否因下游工站的「站前半成品 WIP 上限」已滿而處於「滿載阻塞 (Blocked)」狀態
   if (isWipBlocked) {
-    const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
-    disableStartButton(`🛑 站後暫存已滿 (${currentOutBuffer}/${currentMaxWip} 件) - 請等待下游消化`);
-    showMsg(`🛑 站後在製品已達上限 (${currentOutBuffer}/${currentMaxWip} 件)！過滿不可再開工，請等待下游【${downLabel}】完成消化後自動解鎖！`, "#9333ea");
+    const downLabel = blockedDownstreamSt || ((successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站"));
+    disableStartButton(`🛑 下游【${downLabel}】半成品已滿 (${currentOutBuffer}/${effectiveOutMaxWip} 件) - 請待消化`);
+    showMsg(`🛑 下游【${downLabel}】的半成品 WIP 已達該站設定上限 (${currentOutBuffer}/${effectiveOutMaxWip} 件)！過滿不可再開工投入，請等待【${downLabel}】完成消化後自動解鎖！`, "#9333ea");
     return;
   }
 
@@ -1289,13 +1477,17 @@ async function updateRawDb(newRaw) {
 }
 
 document.getElementById("btnPlusIn").onclick = () => {
-  const curAvail = isRootStation ? manualBufferWip : kitCount;
-  if (currentMaxWip > 0 && curAvail >= currentMaxWip) {
-    playAudioFeedback("WARNING");
-    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 件)，過滿不能再手動增加！`;
-    showMsg(tip, "#9333ea");
-    showScanBanner(tip, "warn", 3000);
-    return;
+  // 🛑 WIP 限制僅適用於「前一站是半成品進入 (!isRootStation)」之工站；起始工站屬於原料/零件進入，不受 WIP 上限限制
+  if (!isRootStation) {
+    const effMyLimit = myStationMaxWip > 0 ? myStationMaxWip : currentMaxWip;
+    const curSub = window.currentTotalSub ?? kitCount;
+    if (effMyLimit > 0 && curSub >= effMyLimit) {
+      playAudioFeedback("WARNING");
+      const tip = `🛑 本站【${stationId}】半成品 WIP 已達上限 (${effMyLimit} 件)，過滿不能再手動增加！`;
+      showMsg(tip, "#9333ea");
+      showScanBanner(tip, "warn", 3000);
+      return;
+    }
   }
   updateWipDb(manualBufferWip + 1, currentOutWip);
 };
@@ -1307,10 +1499,12 @@ document.getElementById("btnMinusIn").onclick = () => {
 };
 
 document.getElementById("btnPlusSub").onclick = () => {
+  // 🛑 混合工站的「前置半成品」屬於前站半成品進入，受本站設定之半成品 WIP 上限管制
+  const effMyLimit = myStationMaxWip > 0 ? myStationMaxWip : currentMaxWip;
   const curSub = window.currentTotalSub ?? manualBufferWip;
-  if (currentMaxWip > 0 && curSub >= currentMaxWip) {
+  if (effMyLimit > 0 && curSub >= effMyLimit) {
     playAudioFeedback("WARNING");
-    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 套)，過滿不能再手動增加！`;
+    const tip = `🛑 本站【${stationId}】半成品 WIP 已達上限 (${effMyLimit} 套)，過滿不能再手動增加！`;
     showMsg(tip, "#9333ea");
     showScanBanner(tip, "warn", 3000);
     return;
@@ -1325,13 +1519,7 @@ document.getElementById("btnMinusSub").onclick = () => {
 };
 
 document.getElementById("btnPlusRaw").onclick = () => {
-  if (currentMaxWip > 0 && rawPartStock >= currentMaxWip) {
-    playAudioFeedback("WARNING");
-    const tip = `🛑 已達站間 WIP 上限 (${currentMaxWip} 顆)，過滿不能再手動增加！`;
-    showMsg(tip, "#9333ea");
-    showScanBanner(tip, "warn", 3000);
-    return;
-  }
+  // 💡 現場原生零件（如螺絲料盒）屬於「零件進入」而非「前一站半成品進入」，依規範不適用 WIP 上限限制，可自由補充！
   updateRawDb(rawPartStock + 1);
 };
 document.getElementById("btnMinusRaw").onclick = () => {
@@ -2057,13 +2245,13 @@ function updateScannerBadge() {
     }
   } else {
     if (isWipBlocked) {
-      const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
+      const downLabel = blockedDownstreamSt || ((successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站"));
       if (badge) {
-        badge.textContent = `🛑 滿載阻塞 (${currentOutBuffer}/${currentMaxWip})`;
+        badge.textContent = `🛑 ${downLabel}滿載 (${currentOutBuffer}/${effectiveOutMaxWip})`;
         badge.className = "scan-badge badge-locked";
       }
       if (mainBtn) {
-        mainBtn.textContent = `🛑 站後已滿 (${currentOutBuffer}/${currentMaxWip} 件) - 請等待【${downLabel}】消化`;
+        mainBtn.textContent = `🛑 下游【${downLabel}】半成品已滿 (${currentOutBuffer}/${effectiveOutMaxWip} 件) - 請待消化`;
         mainBtn.className = "main-btn btn-disabled";
         mainBtn.disabled = true;
       }
@@ -2094,11 +2282,11 @@ async function handleStartWork(source = "SCAN") {
     return;
   }
 
-  // 站間 WIP 上限滿載防呆 (Pre-Start Blocking：站後待領達 WIP 上限時禁止開工下一件)
+  // 站間半成品 WIP 上限滿載防呆 (Pre-Start Blocking：下游工站站前半成品達該站 WIP 上限時禁止開工下一件)
   if (isWipBlocked) {
     playAudioFeedback("WARNING");
-    const downLabel = (successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站");
-    const tip = `🛑 站後在製品已達上限 (${currentOutBuffer}/${currentMaxWip} 件)！過滿不能再加，請等待下游【${downLabel}】消化後再開工！`;
+    const downLabel = blockedDownstreamSt || ((successorStations && successorStations.length > 0) ? successorStations.join("/") : (nextStationId || "下游工站"));
+    const tip = `🛑 下游【${downLabel}】的半成品已達該站 WIP 上限 (${currentOutBuffer}/${effectiveOutMaxWip} 件)！過滿不能再加，請等待【${downLabel}】消化後再開工！`;
     showMsg(tip, "#9333ea");
     showScanBanner(tip, "warn", 4000);
     return;

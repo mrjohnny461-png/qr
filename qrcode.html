@@ -692,6 +692,7 @@
 
       const stRaw = curRaw[st] || (allRaw[activeGroup] && allRaw[activeGroup][st]) || {};
       const subInitVal = (stRaw.subInit !== undefined && stRaw.subInit !== null) ? Math.max(0, parseInt(stRaw.subInit, 10) || 0) : 0;
+      const maxWipVal = (!isRoot && stRaw.maxWip !== undefined && stRaw.maxWip !== null) ? Math.max(0, parseInt(stRaw.maxWip, 10) || 0) : 0;
       const hasRaw = (stRaw.hasRaw === true);
       const rawName = (hasRaw && stRaw.rawName !== undefined && stRaw.rawName !== null) ? String(stRaw.rawName) : "";
       const rawInit = (hasRaw && stRaw.rawInit !== undefined && stRaw.rawInit !== null && stRaw.rawInit !== "") ? stRaw.rawInit : "";
@@ -708,30 +709,36 @@
           <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:6px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;">
             <div style="display:flex; align-items:center; gap:6px;">
               <span style="font-size:12px; font-weight:bold; color:#166534;">🏁 起始工站</span>
-              <span style="font-size:11px; color:#15803d; background:#dcfce7; padding:2px 6px; border-radius:4px; font-weight:600;">🟢 原料無限供應</span>
+              <span style="font-size:11px; color:#15803d; background:#dcfce7; padding:2px 6px; border-radius:4px; font-weight:600;">🟢 原料/零件直接進入（無半成品 WIP 限制）</span>
             </div>
             <span style="background:#bbf7d0; color:#14532d; font-size:11px; font-weight:bold; padding:2px 8px; border-radius:10px; border:1px solid #86efac;">原料無限 ∞</span>
           </div>
         `;
       } else {
         card.style.borderColor = "#fcd34d";
+        const maxWipOpts = [0, 1, 2, 3, 4, 5, 6, 8, 10].map(v =>
+          `<option value="${v}" ${maxWipVal === v ? "selected" : ""}>${v === 0 ? "無限制 (∞)" : `${v} 套`}</option>`
+        ).join("");
         matHtml = `
           <div style="display:flex; flex-direction:column; gap:6px; background:#fff; padding-top:4px;">
             <div style="font-size:11px; color:#b45309; background:#fef3c7; padding:3px 8px; border-radius:4px; font-weight:bold; border:1px solid #fde68a;">
-              需前置工站：${preds.length > 0 ? preds.join(" + ") : "前站"}
+              需前置工站（半成品進入）：${preds.length > 0 ? preds.join(" + ") : "前站"}
             </div>
-            <div style="display:flex; align-items:center; gap:6px; background:#fffbeb; padding:6px 8px; border-radius:6px; border:1px solid #fef08a;">
-              <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 站前半成品初始備料（選填，可為 0）：</span>
+            <div style="display:flex; align-items:center; gap:6px; background:#fffbeb; padding:6px 8px; border-radius:6px; border:1px solid #fef08a; flex-wrap:wrap;">
+              <span style="font-size:12px; font-weight:bold; color:#92400e; white-space:nowrap;">📦 站前半成品初始備料：</span>
               <div style="display:inline-flex; align-items:center; background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:0 4px;">
                 <input type="number" class="station-sub-init" data-station="${st}" value="${subInitVal}" min="0" ${isLocked ? 'readonly' : ''} style="border:none; outline:none; width:36px; padding:2px 0; font-size:12px; text-align:right; font-weight:bold; color:#1e40af; background:${isLocked ? '#e2e8f0' : '#fff'};">
                 <span style="font-size:11px; font-weight:bold; color:#92400e; margin-left:2px;">套</span>
               </div>
-              <span style="font-size:11px; color:#64748b;">(做 1 件扣 1 套)</span>
+              <span style="font-size:12px; font-weight:bold; color:#7e22ce; white-space:nowrap; margin-left:4px;">🛑 半成品WIP上限：</span>
+              <select class="station-max-wip" data-station="${st}" ${isLocked ? 'disabled' : ''} style="width:auto; padding:2px 6px; font-size:12px; font-weight:bold; color:#7e22ce; border:1px solid #d8b4fe; border-radius:4px; background:${isLocked ? '#e2e8f0' : '#faf5ff'}; cursor:pointer;">
+                ${maxWipOpts}
+              </select>
             </div>
             <div style="display:flex; align-items:center; gap:6px;">
               <input type="checkbox" class="station-raw-check" data-station="${st}" id="rawCheck_${st}" ${hasRaw ? "checked" : ""} ${isLocked ? "disabled" : ""} style="cursor:pointer; width:13px; height:13px; margin:0;">
               <label for="rawCheck_${st}" style="font-size:11px; color:#475569; cursor:pointer; margin:0; font-weight:600;">
-                ＋ 附加站前專屬零件 (選填，如螺絲料盒)
+                ＋ 附加站前專屬零件 (選填，如螺絲料盒；零件進入不受 WIP 上限限制)
               </label>
             </div>
             <div class="raw-config-box" id="rawBox_${st}" style="display:${hasRaw ? 'flex' : 'none'}; gap:4px; align-items:center; background:#f8fafc; padding:4px 8px; border-radius:6px; border:1px solid #e2e8f0;">
@@ -822,7 +829,7 @@
     return parts;
   }
 
-  // 蒐集當前畫面上輸入的各站物料設定 (包含 subInit 與專屬原生零件，僅針對該場次實際上線之 STATIONS)
+  // 蒐集當前畫面上輸入的各站物料設定 (包含 subInit、maxWip 與專屬原生零件，僅針對該場次實際上線之 STATIONS)
   function collectCurrentRawConfigs() {
     const configs = {};
     STATIONS.forEach(st => {
@@ -831,6 +838,9 @@
 
       const subInp = document.querySelector(`.station-sub-init[data-station="${st}"]`);
       const subInitVal = (!isRoot && subInp && subInp.value !== '') ? Math.max(0, parseInt(subInp.value, 10) || 0) : 0;
+
+      const maxWipSel = document.querySelector(`.station-max-wip[data-station="${st}"]`);
+      const maxWipVal = (!isRoot && maxWipSel && maxWipSel.value !== '') ? Math.max(0, parseInt(maxWipSel.value, 10) || 0) : 0;
 
       const check = document.getElementById(`rawCheck_${st}`);
       const nameInput = document.querySelector(`.station-raw-name[data-station="${st}"]`);
@@ -841,12 +851,47 @@
       configs[st] = {
         isRoot: isRoot,
         subInit: isRoot ? 0 : subInitVal,
+        maxWip: isRoot ? 0 : maxWipVal,
         hasRaw: hasRaw,
         rawName: (hasRaw && nameInput) ? nameInput.value.trim() : "",
         rawInit: rawInitStr !== "" ? (parseInt(rawInitStr, 10) || 0) : ""
       };
     });
     return configs;
+  }
+
+  async function syncStationWipLimitsToCloud(group, rawConfigs) {
+    try {
+      for (const [st, cfg] of Object.entries(rawConfigs || {})) {
+        if (!cfg || cfg.isRoot) continue;
+        const limitSt = `${st}_LIMIT`;
+        const maxVal = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
+        const checkRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(limitSt)}&select=id`,
+          { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+        );
+        const existing = await checkRes.json();
+        if (Array.isArray(existing) && existing.length > 0) {
+          await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+            method: "PATCH",
+            headers: {
+              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ input_wip: maxVal, output_wip: 0, updated_at: new Date().toISOString() })
+          });
+        } else {
+          await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ group_id: group, station_id: limitSt, input_wip: maxVal, output_wip: 0 })
+          });
+        }
+      }
+    } catch (e) {}
   }
 
   function saveCurrentGroupAndRoundConfigs(group) {
@@ -864,6 +909,7 @@
     allRaw[curFlowKey] = rawConfigs;
     if (eff.isLive) {
       allRaw[group] = rawConfigs;
+      syncStationWipLimitsToCloud(group, rawConfigs);
     }
     saveAllGroupRawConfigs(allRaw);
   }
@@ -960,7 +1006,9 @@
       rawTagHtml = ` <span style='font-size:12px; color:#15803d; background:#dcfce7; border:1px solid #86efac; padding:2px 8px; border-radius:6px; font-weight:bold;'>🏁 起始工站 ｜ 🟢 原料無限供應 ∞</span>`;
     } else {
       const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 0;
+      const stMaxWip = rawCfg.maxWip !== undefined ? Math.max(0, parseInt(rawCfg.maxWip, 10) || 0) : 0;
       params.set("sub_init", subInit);
+      if (stMaxWip > 0) params.set("max_wip", stMaxWip);
       const hasRaw = !!(rawCfg.hasRaw || (rawCfg.rawInit && rawCfg.rawInit > 0));
       if (hasRaw) {
         params.set("has_raw", "1");
@@ -969,7 +1017,7 @@
           params.set("raw_init", rawCfg.rawInit);
         }
       }
-      rawTagHtml = ` <span style='font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:2px 8px; border-radius:6px; font-weight:bold;'>📦 站前半成品初始備料: ${subInit}套${hasRaw && rawCfg.rawName ? ` ｜ ${rawCfg.rawName}: ${rawCfg.rawInit || 0}顆` : ''}</span>`;
+      rawTagHtml = ` <span style='font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:2px 8px; border-radius:6px; font-weight:bold;'>📦 半成品初始備料: ${subInit}套 ｜ 🛑 半成品WIP上限: ${stMaxWip > 0 ? stMaxWip + '套' : '∞'}${hasRaw && rawCfg.rawName ? ` ｜ ${rawCfg.rawName}: ${rawCfg.rawInit || 0}顆(不受WIP限)` : ''}</span>`;
     }
 
     currentFullUrl = `${FIXED_BASE_URL}?${params.toString()}`;
@@ -1050,7 +1098,9 @@
         tagHtml = `<div style="font-size:11px; font-weight:bold; color:#15803d; background:#dcfce7; border:1px solid #86efac; padding:3px 6px; border-radius:4px; margin-bottom:6px;">🏁 起始工站 ｜ 🟢 原料無限供應 ∞</div>`;
       } else {
         const subInit = rawCfg.subInit !== undefined ? rawCfg.subInit : 0;
+        const stMaxWip = rawCfg.maxWip !== undefined ? Math.max(0, parseInt(rawCfg.maxWip, 10) || 0) : 0;
         params.set("sub_init", subInit);
+        if (stMaxWip > 0) params.set("max_wip", stMaxWip);
         const hasRaw = !!(rawCfg.hasRaw || (rawCfg.rawInit && rawCfg.rawInit > 0));
         if (hasRaw) {
           params.set("has_raw", "1");
@@ -1059,7 +1109,7 @@
             params.set("raw_init", rawCfg.rawInit);
           }
         }
-        tagHtml = `<div style="font-size:11px; font-weight:bold; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:3px 6px; border-radius:4px; margin-bottom:6px;">📦 站前半成品初始備料: ${subInit} 套${hasRaw && rawCfg.rawName ? `<br>＋ ${rawCfg.rawName}: ${rawCfg.rawInit || 0} 顆` : ''}</div>`;
+        tagHtml = `<div style="font-size:11px; font-weight:bold; color:#92400e; background:#fef3c7; border:1px solid #fde68a; padding:3px 6px; border-radius:4px; margin-bottom:6px;">📦 半成品初始備料: ${subInit} 套 ｜ 🛑 WIP上限: ${stMaxWip > 0 ? stMaxWip + '套' : '∞'}${hasRaw && rawCfg.rawName ? `<br>＋ ${rawCfg.rawName}: ${rawCfg.rawInit || 0} 顆 (零件不受WIP限)` : ''}</div>`;
       }
 
       const url = `${FIXED_BASE_URL}?${params.toString()}`;

@@ -784,11 +784,80 @@ async function upsertSystemModeCloud(modeVal, roundVal, startCdVal, finishCdVal,
   } catch (e) {}
 }
 
-// 重置指定組別的 station_wip 在製品庫存 (回到該場次初始設定備料 subInit / rawInit 與各站半成品 WIP 上限 maxWip，保留歷史 event 數據，且排除 SYSTEM_MODE、GROUP_MODE 與 *_LIMIT)
+// 輔助函式：安全新增或更新指定 group_id (如 G20 或 G20-T2) 的 station_wip 資料列
+async function upsertCloudWipRecord(targetGrp, stId, inVal, outVal, keepExistingOut = false) {
+  if (!targetGrp || !stId) return;
+  try {
+    const checkRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(targetGrp)}&station_id=eq.${encodeURIComponent(stId)}&select=id,input_wip,output_wip`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } }
+    );
+    const existing = await checkRes.json();
+    if (Array.isArray(existing) && existing.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input_wip: inVal,
+          output_wip: keepExistingOut ? (existing[0].output_wip || 0) : outVal,
+          updated_at: new Date().toISOString()
+        })
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group_id: targetGrp,
+          station_id: stId,
+          input_wip: inVal,
+          output_wip: outVal
+        })
+      });
+    }
+  } catch (e) {}
+}
+
+// 重置指定組別的 station_wip 在製品庫存 (同時寫入基準組別 G20 與場次專屬代號如 G20-T1 / G20-T2 / G20-OFFICIAL，讓 Table 一眼看出是第幾次測試)
 async function resetGroupWipForNewRound(group, viewRound) {
   if (!group || group === "ALL") return;
   try {
     const flowKey = getFlowKeyForRound(group, viewRound);
+
+    // 0. 若切換至第 2~10 次測試或正式實作，且第 1 次測試 (G20-T1) 在 station_wip 尚未有獨立快照，先將目前 G20 的 station_wip 快照封存至 G20-T1
+    const t1Key = `${group}-T1`;
+    if (flowKey && flowKey !== t1Key) {
+      try {
+        const chkT1Wip = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(t1Key)}&select=id`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+        });
+        const existT1Wip = await chkT1Wip.json();
+        if (!Array.isArray(existT1Wip) || existT1Wip.length === 0) {
+          const baseWipRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&select=station_id,input_wip,output_wip`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+          });
+          const baseWipRows = await baseWipRes.json();
+          if (Array.isArray(baseWipRows)) {
+            const t1WipPayload = baseWipRows
+              .filter(r => r.station_id && r.station_id !== "SYSTEM_MODE" && r.station_id !== "GROUP_MODE")
+              .map(r => ({
+                group_id: t1Key,
+                station_id: r.station_id,
+                input_wip: r.input_wip || 0,
+                output_wip: r.output_wip || 0
+              }));
+            if (t1WipPayload.length > 0) {
+              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+                method: "POST",
+                headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify(t1WipPayload)
+              });
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
     // 若切換至新場次 (例如 G20-T2)，確保雲端 station_flow 也同步建立該場次的流程紀錄
     if (flowKey && flowKey !== group) {
       try {
@@ -816,11 +885,15 @@ async function resetGroupWipForNewRound(group, viewRound) {
       } catch (e) {}
     }
 
-    await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
-      method: "PATCH",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
-    });
+    const targetGroups = Array.from(new Set([group, flowKey].filter(Boolean)));
+    for (const tGrp of targetGroups) {
+      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(tGrp)}&station_id=not.in.(SYSTEM_MODE,GROUP_MODE)&station_id=not.like.*_LIMIT`, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ input_wip: 0, output_wip: 0, updated_at: new Date().toISOString() })
+      });
+    }
+
     const allRaw = JSON.parse(localStorage.getItem("ie_chair_group_station_raw") || "{}");
     const groupRaw = (flowKey && allRaw[flowKey]) ? allRaw[flowKey] : (allRaw[group] || {});
     for (const [stKey, cfg] of Object.entries(groupRaw)) {
@@ -828,39 +901,16 @@ async function resetGroupWipForNewRound(group, viewRound) {
       const initSub = (!cfg.isRoot && cfg.subInit !== undefined && cfg.subInit !== null)
         ? Math.max(0, parseInt(cfg.subInit, 10) || 0)
         : 0;
-      await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey)}`, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ input_wip: initSub, output_wip: 0, updated_at: new Date().toISOString() })
-      });
-      if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
-        const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
-        const limStId = `${stKey}_LIMIT`;
-        const checkLim = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(limStId)}&select=id`, {
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-        });
-        const existingLim = await checkLim.json();
-        if (Array.isArray(existingLim) && existingLim.length > 0) {
-          await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingLim[0].id}`, {
-            method: "PATCH",
-            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ input_wip: stLim, output_wip: 0, updated_at: new Date().toISOString() })
-          });
-        } else {
-          await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-            method: "POST",
-            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ group_id: group, station_id: limStId, input_wip: stLim, output_wip: 0 })
-          });
+      for (const tGrp of targetGroups) {
+        await upsertCloudWipRecord(tGrp, stKey, initSub, 0, false);
+        if (!cfg.isRoot && cfg.maxWip !== undefined && cfg.maxWip !== null) {
+          const stLim = Math.max(0, parseInt(cfg.maxWip, 10) || 0);
+          await upsertCloudWipRecord(tGrp, `${stKey}_LIMIT`, stLim, 0, false);
         }
-      }
-      if (cfg.hasRaw) {
-        const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
-        await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(stKey + "_RAW")}`, {
-          method: "PATCH",
-          headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ input_wip: initRaw, output_wip: 0, updated_at: new Date().toISOString() })
-        });
+        if (cfg.hasRaw) {
+          const initRaw = Math.max(0, parseInt(cfg.rawInit, 10) || 0);
+          await upsertCloudWipRecord(tGrp, `${stKey}_RAW`, initRaw, 0, false);
+        }
       }
     }
   } catch (e) {}
@@ -1822,7 +1872,7 @@ async function renderFlowDiagram(group, forceRender = false) {
 
   const [flows, wipRes] = await Promise.all([
     fetchAndResolveFlowsForRound(group, viewRound),
-    fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${group}`, {
+    fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=in.(${encodeURIComponent(group)},${encodeURIComponent(flowKey)})`, {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
     })
   ]);
@@ -1866,8 +1916,32 @@ async function renderFlowDiagram(group, forceRender = false) {
     if (st) roundOutMap[st] = (roundOutMap[st] || 0) + 1;
   });
 
+  // 優先整理基準 group 與場次專屬 flowKey (如 G20-T1 / G20-T2) 的 station_wip 資料
+  const baseWips = wips.filter(w => (w.group_id || "").trim() === group);
+  const roundWips = wips.filter(w => (w.group_id || "").trim() === flowKey);
+
+  // 若目前檢視進行中場次 (isLive) 且雲端 station_wip 尚未有 flowKey (如 G20-T2) 的資料列，自動背景補齊讓後台 Table 一眼看出是第幾次測試
+  if (viewRound.isLive && flowKey && flowKey !== group && roundWips.length === 0 && baseWips.length > 0) {
+    const syncRows = baseWips
+      .filter(r => r.station_id && r.station_id !== "SYSTEM_MODE" && r.station_id !== "GROUP_MODE")
+      .map(r => ({
+        group_id: flowKey,
+        station_id: r.station_id,
+        input_wip: r.input_wip || 0,
+        output_wip: roundOutMap[(r.station_id || "").trim()] ?? (r.output_wip || 0)
+      }));
+    if (syncRows.length > 0) {
+      fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(syncRows)
+      }).catch(() => {});
+    }
+  }
+
   const wipMap = {};
-  wips.forEach(w => {
+  const orderedWips = viewRound.isLive ? [...roundWips, ...baseWips] : [...baseWips, ...roundWips];
+  orderedWips.forEach(w => {
     const stKey = (w.station_id || "").trim();
     wipMap[stKey] = {
       inWip: w.input_wip || 0,
@@ -1963,7 +2037,7 @@ async function renderFlowDiagram(group, forceRender = false) {
     // 2. 計算【本站站前半成品 WIP 上限 (myInMaxWip)】與【站後送往下游之半成品在庫量 (currentOutBuffer) / 下游滿載阻塞 (isWipBlocked)】
     // 優先讀取雲端 `${stId}_LIMIT` (讓各站手機或 QR 頁修改後立即生效)，其次讀取本機 rawCfg.maxWip，最後回退預設 currentMaxWip
     function resolveStationSemiFinishedLimit(targetSt) {
-      if (viewRound.isLive && wipMap[targetSt + "_LIMIT"] !== undefined) {
+      if (wipMap[targetSt + "_LIMIT"] !== undefined) {
         return Math.max(0, parseInt(wipMap[targetSt + "_LIMIT"].inWip, 10) || 0);
       }
       const tCfg = getStationRaw(group, targetSt, viewRound);
@@ -2469,105 +2543,35 @@ async function saveCustomFlow() {
       } catch(e) {}
     }
 
-    // 🌟 若為目前進行中場次，同步更新每站的 station_wip：起始站 input_wip = 0，後續工站立即套用設定之半成品數 subInit
-    if (viewRound.isLive) {
-      try {
-        for (const st of activeStations) {
-          const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
-          const isRoot = preds.length === 0;
-          const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 0);
+    // 🌟 同步更新該場次專屬代號 (如 G20-T1 / G20-T2 / G20-OFFICIAL) 與進行中基準組別 (G20) 的 station_wip
+    try {
+      const targetWipGroups = viewRound.isLive
+        ? Array.from(new Set([group, flowKey].filter(Boolean)))
+        : [flowKey];
 
-          const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(st)}&select=id,input_wip,output_wip`, {
-            headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-          });
-          const existing = await checkRes.json();
-          if (Array.isArray(existing) && existing.length > 0) {
-            await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existing[0].id}`, {
-              method: "PATCH",
-              headers: {
-                apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                input_wip: initialInput,
-                output_wip: clearOld ? 0 : existing[0].output_wip,
-                updated_at: new Date().toISOString()
-              })
-            });
-          } else {
-            await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-              method: "POST",
-              headers: {
-                apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ group_id: group, station_id: st, input_wip: initialInput, output_wip: 0 })
-            });
-          }
+      for (const st of activeStations) {
+        const preds = payload.filter(p => (p.next_station_id || "").trim() === st).map(p => (p.station_id || "").trim());
+        const isRoot = preds.length === 0;
+        const initialInput = isRoot ? 0 : (newGroupRaw[st]?.subInit ?? 0);
+
+        for (const tGrp of targetWipGroups) {
+          await upsertCloudWipRecord(tGrp, st, initialInput, 0, !clearOld);
 
           // 若為後續工站 (前一站是半成品進入)，同步寫入本站專屬半成品 WIP 上限 (${st}_LIMIT)
           if (!isRoot) {
-            const limitSt = `${st}_LIMIT`;
             const stMaxWip = newGroupRaw[st]?.maxWip ?? 0;
-            const checkLim = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(limitSt)}&select=id`, {
-              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-            });
-            const existingLim = await checkLim.json();
-            if (Array.isArray(existingLim) && existingLim.length > 0) {
-              await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingLim[0].id}`, {
-                method: "PATCH",
-                headers: {
-                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ input_wip: stMaxWip, output_wip: 0, updated_at: new Date().toISOString() })
-              });
-            } else {
-              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-                method: "POST",
-                headers: {
-                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ group_id: group, station_id: limitSt, input_wip: stMaxWip, output_wip: 0 })
-              });
-            }
+            await upsertCloudWipRecord(tGrp, `${st}_LIMIT`, stMaxWip, 0, false);
           }
 
           // 若有附加專屬零件，同步更新 ${st}_RAW
           if (newGroupRaw[st]?.hasRaw) {
-            const rawSt = `${st}_RAW`;
             const rawInit = newGroupRaw[st].rawInit || 0;
-            const checkRaw = await fetch(`${SUPABASE_URL}/rest/v1/station_wip?group_id=eq.${encodeURIComponent(group)}&station_id=eq.${encodeURIComponent(rawSt)}&select=id`, {
-              headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-            });
-            const existingRaw = await checkRaw.json();
-            if (Array.isArray(existingRaw) && existingRaw.length > 0) {
-              if (clearOld) {
-                await fetch(`${SUPABASE_URL}/rest/v1/station_wip?id=eq.${existingRaw[0].id}`, {
-                  method: "PATCH",
-                  headers: {
-                    apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                    "Content-Type": "application/json"
-                  },
-                  body: JSON.stringify({ input_wip: rawInit, output_wip: 0, updated_at: new Date().toISOString() })
-                });
-              }
-            } else {
-              await fetch(`${SUPABASE_URL}/rest/v1/station_wip`, {
-                method: "POST",
-                headers: {
-                  apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ group_id: group, station_id: rawSt, input_wip: rawInit, output_wip: 0 })
-              });
-            }
+            await upsertCloudWipRecord(tGrp, `${st}_RAW`, rawInit, 0, false);
           }
         }
-      } catch(errWip) {
-        console.warn("同步 station_wip 發生警告：", errWip);
       }
+    } catch(errWip) {
+      console.warn("同步 station_wip 發生警告：", errWip);
     }
 
     loadAll();

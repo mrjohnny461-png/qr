@@ -125,6 +125,11 @@
       <option value="G18">G18</option>
       <option value="G19">G19</option>
       <option value="G20">G20</option>
+      <option value="G21">G21</option>
+      <option value="G22">G22</option>
+      <option value="G23">G23</option>
+      <option value="G24">G24</option>
+      <option value="G25">G25</option>
       <option value="ALL">全部組別 (僅表格)</option>
     </select>
     <button id="bindGroupUrlBtn" type="button" onclick="bindCurrentGroupUrl()" style="padding:6px 10px; font-size:12px; font-weight:bold; border-radius:8px; border:1px solid #93c5fd; background:#eff6ff; color:#1d4ed8; cursor:pointer;" title="將此視窗與網址永久鎖定為目前選取的組別（鎖定後即使解鎖管理員也無法切換組別）">
@@ -277,7 +282,7 @@
       <span style="font-size:13px; color:#475569; background:#f1f5f9; padding:4px 10px; border-radius:6px;">🎯 產線瓶頸判定：<b>該組平均 Cycle Time 之最大值</b></span>
     </div>
     <p style="color:#64748b; font-size:14px; margin:6px 0 10px 0;">
-      說明：<b>本次生產活動 Cycle Time = 該次生產活動總耗時（首件開工至末件完工）÷ 共產出成品組數</b>。等待時間 = 站內換件閒置 + 下游等料飢餓時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。線平衡率 = 各站 Cycle Time 總和 ÷（站數 × 瓶頸 Cycle Time）。
+      說明：<b>本次生產活動 Cycle Time = 該次生產活動總耗時（首件開工至末件完工）÷ 共產出成品組數</b>。等待時間 = 站內換件閒置 + 下游等料飢餓時間。稼動率 = 作業時間 ÷（作業時間 + 等待時間）。
     </p>
 
     <!-- ⏱️ 本次生產活動 Cycle Time 即時計算看板 (常駐顯示) -->
@@ -305,11 +310,6 @@
           <div style="font-size:12px; color:#0e7490; font-weight:bold;">🎯 本次生產活動 Cycle Time</div>
           <div id="taktValueText" style="font-size:24px; font-weight:900; color:#0891b2; margin-top:2px;">-- 秒/組</div>
           <div id="taktFormulaDetailText" style="font-size:11px; color:#0e7490; margin-top:2px; font-weight:600;">尚無產出組數</div>
-        </div>
-        <div style="background:#fff; border:1px solid #bae6fd; border-radius:8px; padding:10px 12px;">
-          <div style="font-size:12px; color:#64748b; font-weight:bold;">⚖️ 產線平衡與瓶頸站 CT 比對</div>
-          <div id="taktVsBottleneckText" style="font-size:14px; font-weight:800; color:#334155; margin-top:4px;">--</div>
-          <div id="taktSteadyIntervalText" style="font-size:11px; color:#64748b; margin-top:4px;">--</div>
         </div>
       </div>
     </div>
@@ -1372,7 +1372,7 @@ function openGroupLinksModal() {
     baseHint.innerHTML = `🌐 目前網站根目錄：<code>${baseDir}</code>`;
   }
   container.innerHTML = "";
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; i <= 25; i++) {
     const g = `G${String(i).padStart(2, "0")}`;
     const screenUrl = `${baseDir}工蓋螢幕.html?group=${g}&lock=1`;
     const qrUrl = `${baseDir}qrcode.html?group=${g}&lock=1`;
@@ -1401,14 +1401,14 @@ function closeGroupLinksModal() {
 function copyAllGroupLinks() {
   const baseDir = getSiteDirBaseUrl();
   const lines = ["【IE Chair 各組專屬工蓋螢幕監控網址 (內附前往該組 QR Code 連結)】"];
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; i <= 25; i++) {
     const g = `G${String(i).padStart(2, "0")}`;
     lines.push(`${g} 專屬看板：${baseDir}工蓋螢幕.html?group=${g}&lock=1`);
   }
   const text = lines.join("\n");
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text).then(() => {
-      alert("✓ 已複製 G01 ~ G20 全部 20 組專屬網址清單！可直接貼上至 Line 群組或教學平台。");
+      alert("✓ 已複製 G01 ~ G25 全部 25 組專屬網址清單！可直接貼上至 Line 群組或教學平台。");
     });
   }
 }
@@ -2994,9 +2994,6 @@ function showStats(data) {
   // 4. 渲染全組產線整體總結列 (Line Total / Overall Summary)
   if (stationKeys.length > 0) {
     const sumAvgCycle = stationKeys.reduce((acc, k) => acc + stats[k].avgCycle, 0);
-    const lineBalanceEff = (maxAvgCycle > 0 && stationKeys.length > 0)
-      ? ((sumAvgCycle / (stationKeys.length * maxAvgCycle)) * 100).toFixed(1)
-      : "0.0";
     const overallAvgWait = totalQty > 0 ? (totalWait / totalQty).toFixed(1) : "0.0";
     const totalDenom = totalRun + totalWait;
     const overallUtil = totalDenom > 0 ? ((totalRun / totalDenom) * 100).toFixed(1) : "0.0";
@@ -3012,9 +3009,9 @@ function showStats(data) {
 
     const totalRowData = [
       `<span style="color:#1e40af; font-size:14px; font-weight:bold;">🎯 全組產線整體 (Line Total)</span>`,
-      `<span style="color:#64748b; font-size:13px;">全線合計 / 平衡分析</span>`,
+      `<span style="color:#64748b; font-size:13px;">全線合計</span>`,
       totalQty,
-      `<div><b>${sumAvgCycle.toFixed(1)}</b> 秒 <span style="font-size:11px; color:#64748b; font-weight:normal;">(平均 ${(sumAvgCycle / stationKeys.length).toFixed(1)}s)</span></div><div style="font-size:11px; color:#16a34a; font-weight:bold; margin-top:2px;">🎯 線平衡率: ${lineBalanceEff}%</div>`,
+      `<div><b>${sumAvgCycle.toFixed(1)}</b> 秒 <span style="font-size:11px; color:#64748b; font-weight:normal;">(平均 ${(sumAvgCycle / stationKeys.length).toFixed(1)}s)</span></div>`,
       totalTaktCellHtml,
       totalRun.toFixed(1),
       overallAvgWait,

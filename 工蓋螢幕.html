@@ -340,6 +340,54 @@
     </table>
   </div>
 
+  <!-- 2026: event-sourced WIP / Starvation independent of old station_wip counters -->
+  <div class="card" id="ieWipDashboard" style="border:1px solid #99f6e4;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;">WIP / Starved 時間軸分析（無限 Buffer）</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button type="button" onclick="ieManualBackfillCurrentRun()" id="ieBackfillRunBtn"
+         class="btn-secondary" style="background:#0f766e;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">📥 由歷史 Event 匯入/重建 WIP 表並畫圖</button>
+        <button type="button" onclick="ieCloseSelectedRun()" id="ieCloseRunBtn"
+         class="btn-secondary" style="display:none;">結束本次觀測</button>
+      </div>
+    </div>
+    <p id="ieWipStatus" style="font-size:13px;color:#64748b;margin:10px 0;">尚未建立本場次 WIP 事件紀錄</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+      <div style="padding:12px;background:#f0fdfa;border-radius:8px;"><small>平均站間 WIP（時間加權）</small><div id="ieAvgWip" style="font-size:26px;font-weight:800;">--</div></div>
+      <div style="padding:12px;background:#f0fdfa;border-radius:8px;"><small>全線最高同時 WIP</small><div id="ieMaxWip" style="font-size:26px;font-weight:800;">--</div></div>
+      <div style="padding:12px;background:#fffbeb;border-radius:8px;"><small>全線各站累計缺料時間</small><div id="ieStarvedTotal" style="font-size:26px;font-weight:800;">--</div></div>
+      <div style="padding:12px;background:#fffbeb;border-radius:8px;"><small>平均每次 Starved</small><div id="ieStarvedAvg" style="font-size:26px;font-weight:800;">--</div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 8px;">
+      <label for="ieWipBufferSelect" style="font-weight:600;">WIP 階梯圖：</label>
+      <select id="ieWipBufferSelect" onchange="ieDrawSelectedWipChart()"><option value="TOTAL">全線合計</option></select>
+      <label for="ieWipXAxisMode" style="font-size:13px;color:#475569;margin-left:6px;font-weight:600;">橫軸顯示：</label>
+      <select id="ieWipXAxisMode" onchange="ieDrawSelectedWipChart()" style="font-size:13px;padding:5px 10px;">
+        <option value="BOTH" selected>⏱️ 開工經過秒數 ＋ 實際時間（推薦教學用）</option>
+        <option value="ELAPSED">⏱️ 僅顯示開工經過秒數 (0s ~ Ns)</option>
+        <option value="CLOCK">🕒 僅顯示實際時鐘時間 (HH:MM:SS)</option>
+      </select>
+      <button type="button" onclick="ieExportWipCsv()">匯出 WIP CSV</button>
+      <span style="font-size:12px;color:#0f766e;background:#f0fdfa;border:1px solid #99f6e4;padding:4px 10px;border-radius:999px;margin-left:auto;">💡 滑鼠游標移至圖上圓點可查看詳細座標與觸發工站</span>
+    </div>
+    <div id="ieWipChart" style="position:relative;overflow-x:auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;min-height:260px;">
+      <span style="color:#64748b;font-size:13px;">等待實際加工事件</span>
+    </div>
+    <h3 style="font-size:16px;margin-bottom:5px;">各 Buffer 平均與最大 WIP</h3>
+    <div style="overflow-x:auto;"><table id="ieBufferStats"><thead><tr><th>Buffer</th><th>目前 WIP</th><th>平均 WIP</th><th>最大 WIP</th></tr></thead><tbody></tbody></table></div>
+    <h3 style="font-size:16px;margin-bottom:5px;">各站 Starved / 齊套待開工</h3>
+    <p style="font-size:12px;color:#64748b;">Starved 依「未加工且必要前置料不足」推算；統計僅計首件開始前及完成的兩次加工間隔，未結束的末段另作即時狀態，不混入平均值。Ready 至下一次 Start 的時間不一定全是實際搬料。</p>
+    <div style="overflow-x:auto;"><table id="ieStarvedStats"><thead><tr><th>工站</th><th>Starved 次數</th><th>累計 Starved 秒</th><th>平均每次秒數</th><th>累計 Ready 秒</th></tr></thead><tbody></tbody></table></div>
+    <h3 style="font-size:16px;margin-bottom:5px;">線外 Rework 時間／成本</h3>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f0fdfa;border-radius:8px;padding:12px;">
+      <span id="ieReworkSummary" style="font-size:13px;">尚無重工紀錄</span>
+      <label for="ieReworkHourlyCost" style="font-size:13px;">假設人工成本（元／小時）：</label>
+      <input id="ieReworkHourlyCost" type="number" min="0" step="1" value="0" style="max-width:105px;" onchange="ieUpdateReworkCost()">
+      <strong id="ieReworkCost">估計成本：0.00 元</strong>
+    </div>
+    <div style="font-size:12px;color:#64748b;margin-top:8px;">站間 WIP 不含工作站內正在加工件數、不含 INIT 初始齊套庫存與 RAW 原料庫存；Rework 只統計額外加工時間及估計人工成本，不直接增減主線 WIP。每次觀測由第一筆 Start 到結束時刻定義。</div>
+  </div>
+
   <!-- 區塊 3：詳細數據 -->
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
@@ -1843,9 +1891,12 @@ async function loadAll(forceRender = false) {
         topGotoBtn.innerHTML = `🖨️ 前往【${group}】QR Code 頁面 ❯`;
         topGotoBtn.style.display = "inline-flex";
       }
+      document.getElementById("ieWipDashboard").style.display = "block";
       hasFlowChanged = await renderFlowDiagram(group, isForced);
+      await ieUpdateWipDashboard(group, viewRound);
     } else {
       document.getElementById("flowCard").style.display = "none";
+      document.getElementById("ieWipDashboard").style.display = "none";
       const gotoBtn = document.getElementById("gotoQrcodeBtn");
       if (gotoBtn) gotoBtn.style.display = "none";
       const topGotoBtn = document.getElementById("topGotoQrcodeBtn");
@@ -3073,6 +3124,771 @@ document.getElementById("downloadBtn").onclick = () => {
   link.download = `ie_chair_data_${document.getElementById("groupSelect").value}.csv`;
   link.click();
 };
+
+// ===== 2026 WIP event timeline / Starved analysis =====
+let ieDisplayedRun = null;
+let ieDisplayedEvents = [];
+let ieDisplayedWips = [];
+let ieWipAnalysis = null;
+window.ieSelectedRunBufferMap = null;
+window.ieSelectedRunFlowKey = null;
+
+async function ieReadRows(table, query) {
+  const all = [];
+  for (let offset = 0; offset < 100000; offset += 1000) {
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${query}&limit=1000&offset=${offset}`;
+    const res = await fetch(url, {headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+    if (!res.ok) throw new Error(`${table} 查詢失敗：HTTP ${res.status}`);
+    const chunk = await res.json();
+    all.push(...chunk);
+    if (chunk.length < 1000) return all;
+  }
+  throw new Error('歷史紀錄超過十萬筆，請分段匯出');
+}
+const ieSeconds = ms => (ms / 1000).toFixed(1);
+function ieBufferIds(flow) {
+  return [...new Set(flow.filter(f=>f.next_station_id && f.line_type !== 'REWORK')
+    .map(f=>`${f.station_id}_${f.next_station_id}`))];
+}
+const IE_IDLE_PAUSE_LIMIT_MS = 600 * 1000; // 單段全線停頓超過 600 秒（10 分鐘）視為中場休息/跨堂空窗，不計入加權時間與 Starved
+
+function ieComputeAnalysis(run,changes,events) {
+  const flow = Array.isArray(run.flow_snapshot) ? run.flow_snapshot : [];
+  const edges = ieBufferIds(flow);
+  const start = Date.parse(run.started_at || run.created_at);
+  const end = run.ended_at ? Date.parse(run.ended_at) : Date.now();
+  const valid = Number.isFinite(start) && end >= start && !!run.started_at;
+  const byId = {}, balance = {}, areas = {}, maxima = {}, history = {};
+  const edgeSet = new Set(edges);
+  edges.forEach(id=>{balance[id]=0;areas[id]=0;maxima[id]=0;history[id]=[];});
+  const changesSorted = [...changes].sort((a,b)=>Date.parse(a.event_time)-Date.parse(b.event_time)||a.id-b.id);
+  changesSorted.filter(x=>Date.parse(x.event_time)<=start).forEach(x=>{byId[x.buffer_id]=x.wip_after;if(edgeSet.has(x.buffer_id))balance[x.buffer_id]=x.wip_after;});
+  let total = Object.values(balance).reduce((a,b)=>a+b,0), totalArea=0,maxTotal=total,last=start;
+  let activeDurationMs=0;
+  let totalHistory=[{t:start,y:total}];
+  edges.forEach(id=>{maxima[id]=balance[id]; history[id].push({t:start,y:balance[id]});});
+  let index=0;
+  while(index<changesSorted.length && Date.parse(changesSorted[index].event_time)<=start)index++;
+  while(valid && index<changesSorted.length){
+    const t=Date.parse(changesSorted[index].event_time);
+    if(t>end)break;
+    const rawDt=Math.max(0,t-last);
+    const dt=rawDt>IE_IDLE_PAUSE_LIMIT_MS?0:rawDt;
+    activeDurationMs+=dt;
+    edges.forEach(id=>areas[id]+=balance[id]*dt);
+    totalArea+=total*dt;
+    while(index<changesSorted.length && Date.parse(changesSorted[index].event_time)===t){
+      const ev=changesSorted[index++];byId[ev.buffer_id]=ev.wip_after;
+      if(edgeSet.has(ev.buffer_id))balance[ev.buffer_id]=ev.wip_after;
+    }
+    total=Object.values(balance).reduce((a,b)=>a+b,0);
+    edges.forEach(id=>{maxima[id]=Math.max(maxima[id],balance[id]);history[id].push({t,y:balance[id]});});
+    maxTotal=Math.max(maxTotal,total);
+    totalHistory.push({t,y:total});last=t;
+  }
+  const rawRest=Math.max(0,end-last);
+  const rest=rawRest>IE_IDLE_PAUSE_LIMIT_MS?0:rawRest;
+  activeDurationMs+=rest;
+  edges.forEach(id=>{areas[id]+=balance[id]*rest;history[id].push({t:end,y:balance[id]});});
+  totalArea+=total*rest;totalHistory.push({t:end,y:total});
+  const T=Math.max(1,activeDurationMs);
+
+  const stations=[...new Set(flow.filter(f=>f.line_type!=='REWORK')
+    .map(f=>f.station_id))];
+  const starved=[];
+  let starvedTotal=0,starvedN=0,readyTotal=0;
+  for(const st of stations){
+    const pres=[...new Set(flow.filter(f=>f.next_station_id===st && f.line_type!=='REWORK').map(f=>f.station_id))];
+    if(!pres.length)continue;
+    const stationEvents=events.filter(e=>e.station_id===st && e.start_time)
+      .sort((a,b)=>Date.parse(a.start_time)-Date.parse(b.start_time));
+    const hasRaw=changesSorted.some(c=>c.buffer_id==='RAW_'+st);
+    const tracked=['INIT_'+st,...pres.map(p=>p+'_'+st),...(hasRaw?['RAW_'+st]:[])];
+    const predEvents=events.filter(e=>pres.includes(e.station_id) && e.start_time);
+    const predEarliestStart=predEvents.length
+      ? Math.min(...predEvents.map(e=>Date.parse(e.start_time)).filter(Number.isFinite))
+      : start;
+    const gapList=[];
+    let gapStart=Math.max(start, predEarliestStart);
+    for(const ev of stationEvents){
+      const s=Date.parse(ev.start_time);
+      if(s>gapStart && s<=end)gapList.push([gapStart,s]);
+      if(ev.finish_time) gapStart=Math.max(s,Date.parse(ev.finish_time));
+      else gapStart=Infinity;
+    }
+    const starts=[], lengths=[];
+    let starveMs=0,readyMs=0, count=0;
+    for(const [a,b] of gapList){
+      const cur={};tracked.forEach(k=>cur[k]=0);
+      changesSorted.forEach(c=>{
+        const t=Date.parse(c.event_time);
+        if(t<=a && tracked.includes(c.buffer_id))cur[c.buffer_id]=c.wip_after;
+      });
+      const ready=()=> (cur['INIT_'+st]>0 || pres.every(p=>cur[p+'_'+st]>0))
+        && (!hasRaw || cur['RAW_'+st]>0);
+      let previous=a, isMissing=!ready(), episodeAccMs=0;
+      const scoped=changesSorted.filter(c=>tracked.includes(c.buffer_id)
+        && Date.parse(c.event_time)>a && Date.parse(c.event_time)<b);
+      for(let k=0;k<scoped.length;){
+        const t=Date.parse(scoped[k].event_time);
+        const segDt=(t-previous)>IE_IDLE_PAUSE_LIMIT_MS?0:Math.max(0,t-previous);
+        if(isMissing){starveMs+=segDt;episodeAccMs+=segDt;}else readyMs+=segDt;
+        while(k<scoped.length && Date.parse(scoped[k].event_time)===t){
+          const ch=scoped[k++];cur[ch.buffer_id]=ch.wip_after;
+        }
+        const nowMissing=!ready();
+        if(isMissing && !nowMissing){
+          if(episodeAccMs>0){count++;lengths.push(episodeAccMs);}
+          episodeAccMs=0;
+        } else if(!isMissing && nowMissing){episodeAccMs=0;}
+        isMissing=nowMissing;previous=t;
+      }
+      const tailDt=(b-previous)>IE_IDLE_PAUSE_LIMIT_MS?0:Math.max(0,b-previous);
+      if(isMissing){
+        starveMs+=tailDt;episodeAccMs+=tailDt;
+        if(episodeAccMs>0){count++;lengths.push(episodeAccMs);}
+      }
+      else readyMs+=tailDt;
+    }
+    starvedTotal+=starveMs;starvedN+=count;readyTotal+=readyMs;
+    starved.push({station:st,count,totalMs:starveMs,avgMs:count?starveMs/count:0,readyMs});
+  }
+  const perBuffer=edges.map(id=>({id,current:balance[id],avg:valid?areas[id]/T:0,max:maxima[id]}));
+  return {start,end,valid,perBuffer,avgTotal:valid?totalArea/T:0,maxTotal,
+   lastBuffers:byId,totalHistory,history,starved,starvedTotal,starvedN,readyTotal};
+}
+
+async function ieRpc(fn, args = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(args)
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`${fn} 呼叫失敗 (HTTP ${res.status}): ${errText}`);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function ieResolveFlowSnapshotForHistorical(group, flowKey, roundEvents) {
+  const cache = window.cachedGroupFlows || {};
+  let flow = cache[flowKey] || cache[group] || [];
+  if (!Array.isArray(flow) || !flow.length) {
+    try {
+      const localRaw = localStorage.getItem(`ie_chair_flow_backup_${flowKey}`) || localStorage.getItem(`ie_chair_flow_backup_${group}`);
+      if (localRaw) flow = JSON.parse(localRaw) || [];
+    } catch (e) {}
+  }
+  if (Array.isArray(flow) && flow.length) {
+    return flow.map(f => ({
+      station_id: (f.station_id || '').trim(),
+      station_name: f.station_name || f.station_id,
+      next_station_id: f.next_station_id ? f.next_station_id.trim() : null,
+      line_type: f.line_type || 'MAIN'
+    }));
+  }
+  const activeSt = [...new Set(roundEvents.map(e => (e.station_id || '').trim()).filter(Boolean))].sort();
+  if (activeSt.includes('ST01') && activeSt.includes('ST05') && activeSt.includes('ST07')) {
+    return [
+      { station_id: 'ST01', station_name: 'ST01', next_station_id: 'ST05', line_type: 'MAIN' },
+      { station_id: 'ST02', station_name: 'ST02', next_station_id: 'ST05', line_type: 'MAIN' },
+      { station_id: 'ST03', station_name: 'ST03', next_station_id: 'ST06', line_type: 'MAIN' },
+      { station_id: 'ST04', station_name: 'ST04', next_station_id: 'ST06', line_type: 'MAIN' },
+      { station_id: 'ST05', station_name: 'ST05', next_station_id: 'ST07', line_type: 'MAIN' },
+      { station_id: 'ST06', station_name: 'ST06', next_station_id: 'ST07', line_type: 'MAIN' },
+      { station_id: 'ST07', station_name: 'ST07', next_station_id: 'ST08', line_type: 'MAIN' },
+      { station_id: 'ST08', station_name: 'ST08', next_station_id: 'ST09', line_type: 'MAIN' },
+      { station_id: 'ST09', station_name: 'ST09', next_station_id: null, line_type: 'MAIN' }
+    ];
+  }
+  return activeSt.map((st, idx) => ({
+    station_id: st,
+    station_name: st,
+    next_station_id: idx < activeSt.length - 1 ? activeSt[idx + 1] : null,
+    line_type: 'MAIN'
+  }));
+}
+
+async function ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, canWriteToDb = false, forceImport = false) {
+  const roundEvents = (currentEvents || [])
+    .filter(r => r.group_id === group && isEventInTargetRoundAllStatus(r, viewRound) && r.start_time)
+    .sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
+
+  if (!roundEvents.length) return null;
+
+  const flowSnapshot = ieResolveFlowSnapshotForHistorical(group, flowKey, roundEvents);
+  const startTimes = roundEvents.map(e => Date.parse(e.start_time)).filter(Number.isFinite);
+  const endTimes = roundEvents.map(e => Date.parse(e.finish_time || e.start_time)).filter(Number.isFinite);
+  const minStartMs = Math.min(...startTimes);
+  const maxEndMs = Math.max(...endTimes);
+  const startedAtIso = new Date(minStartMs).toISOString();
+  const endedAtIso = new Date(maxEndMs).toISOString();
+
+  const rawDeltas = [];
+  const nextMap = {};
+  const predsMap = {};
+  flowSnapshot.forEach(f => {
+    if (f.line_type === 'REWORK') return;
+    const u = f.station_id;
+    const v = f.next_station_id;
+    if (u && v) {
+      if (!nextMap[u]) nextMap[u] = [];
+      nextMap[u].push(v);
+      if (!predsMap[v]) predsMap[v] = [];
+      predsMap[v].push(u);
+    }
+  });
+
+  const allRaw = JSON.parse(localStorage.getItem('ie_chair_group_station_raw') || '{}');
+  const groupRaw = allRaw[flowKey] || allRaw[group] || {};
+  Object.keys(predsMap).forEach(st => {
+    const subInit = Number(groupRaw[st]?.subInit || 0);
+    if (subInit > 0) {
+      predsMap[st].forEach(p => {
+        rawDeltas.push({
+          t: minStartMs - 1000,
+          event_time: new Date(minStartMs - 1000).toISOString(),
+          buffer_id: `${p}_${st}`,
+          station_id: st,
+          action: 'INIT',
+          delta: subInit,
+          event_id: null
+        });
+      });
+    }
+  });
+
+  roundEvents.forEach(ev => {
+    const st = (ev.station_id || '').trim();
+    if (!st) return;
+    if (ev.start_time && predsMap[st] && predsMap[st].length) {
+      const tMs = Date.parse(ev.start_time);
+      if (Number.isFinite(tMs)) {
+        predsMap[st].forEach(p => {
+          rawDeltas.push({
+            t: tMs,
+            event_time: new Date(tMs).toISOString(),
+            buffer_id: `${p}_${st}`,
+            station_id: st,
+            action: 'START_CONSUME',
+            delta: -1,
+            event_id: ev.id || null
+          });
+        });
+      }
+    }
+    const statusUpper = String(ev.status || '').toUpperCase();
+    if (ev.finish_time && statusUpper !== 'SCRAP' && statusUpper !== 'NG' && nextMap[st] && nextMap[st].length) {
+      const tMs = Date.parse(ev.finish_time);
+      if (Number.isFinite(tMs)) {
+        nextMap[st].forEach(nxt => {
+          rawDeltas.push({
+            t: tMs,
+            event_time: new Date(tMs).toISOString(),
+            buffer_id: `${st}_${nxt}`,
+            station_id: st,
+            action: 'FINISH_PRODUCE',
+            delta: 1,
+            event_id: ev.id || null
+          });
+        });
+      }
+    }
+  });
+
+  rawDeltas.sort((a, b) => a.t - b.t || (b.delta - a.delta));
+
+  const runningBalance = {};
+  const changes = rawDeltas.map((d, idx) => {
+    const cur = runningBalance[d.buffer_id] || 0;
+    const after = Math.max(0, cur + d.delta);
+    const actualDelta = after - cur;
+    runningBalance[d.buffer_id] = after;
+    return {
+      id: idx + 1,
+      group_id: group,
+      flow_key: flowKey,
+      buffer_id: d.buffer_id,
+      station_id: d.station_id,
+      action: d.action,
+      delta: actualDelta,
+      wip_after: after,
+      event_id: d.event_id,
+      event_time: d.event_time
+    };
+  });
+
+  let run = {
+    id: `hist-${flowKey}`,
+    group_id: group,
+    flow_key: flowKey,
+    status: viewRound.isLive ? 'ACTIVE' : 'CLOSED',
+    flow_snapshot: flowSnapshot,
+    created_at: startedAtIso,
+    started_at: startedAtIso,
+    ended_at: endedAtIso,
+    is_historical_reconstructed: true
+  };
+
+  if (canWriteToDb) {
+    try {
+      if (forceImport) {
+        await fetch(`${SUPABASE_URL}/rest/v1/production_run?group_id=eq.${encodeURIComponent(group)}&flow_key=eq.${encodeURIComponent(flowKey)}`, {
+          method: 'DELETE',
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+        });
+      }
+      const runRes = await fetch(`${SUPABASE_URL}/rest/v1/production_run`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation'
+        },
+        body: JSON.stringify([{
+          group_id: group,
+          flow_key: flowKey,
+          status: 'CLOSED',
+          flow_snapshot: flowSnapshot,
+          created_at: startedAtIso,
+          started_at: startedAtIso,
+          ended_at: endedAtIso
+        }])
+      });
+      if (runRes.ok) {
+        const insertedRuns = await runRes.json();
+        if (insertedRuns && insertedRuns[0] && insertedRuns[0].id) {
+          run = insertedRuns[0];
+          run.is_auto_imported = true;
+          if (changes.length > 0) {
+            const timelinePayload = changes.map(c => ({
+              run_id: run.id,
+              group_id: c.group_id,
+              flow_key: c.flow_key,
+              buffer_id: c.buffer_id,
+              station_id: c.station_id,
+              action: c.action,
+              delta: c.delta,
+              wip_after: c.wip_after,
+              event_id: c.event_id,
+              event_time: c.event_time
+            }));
+            for (let i = 0; i < timelinePayload.length; i += 500) {
+              await fetch(`${SUPABASE_URL}/rest/v1/wip_timeline`, {
+                method: 'POST',
+                headers: {
+                  apikey: SUPABASE_KEY,
+                  Authorization: `Bearer ${SUPABASE_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(timelinePayload.slice(i, i + 500))
+              });
+            }
+          }
+        }
+      }
+    } catch (dbErr) {
+      console.warn('自動匯入歷史 WIP 至資料庫略過，改用本地即時推算繪圖：', dbErr);
+    }
+  }
+
+  return { run, changes, events: roundEvents };
+}
+
+async function ieManualBackfillCurrentRun() {
+  const group = document.getElementById('groupSelect').value;
+  const viewRound = getEffectiveViewRound();
+  const flowKey = getFlowKeyForRound(group, viewRound);
+  const status = document.getElementById('ieWipStatus');
+  status.textContent = `正在由【${group} - ${viewRound.label}】的歷史 Event 紀錄重建並匯入 WIP 時間軸...`;
+  let tableExists = true;
+  try {
+    await ieReadRows('production_run', `group_id=eq.${encodeURIComponent(group)}&limit=1`);
+  } catch (e) {
+    tableExists = false;
+  }
+  const built = await ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, tableExists, true);
+  if (!built) {
+    alert(`【${group} - ${viewRound.label}】目前沒有任何歷史 Event 打卡紀錄可供匯入！`);
+    await ieUpdateWipDashboard(group, viewRound);
+    return;
+  }
+  await ieUpdateWipDashboard(group, viewRound);
+  alert(`✓ 已成功從歷史 Event 紀錄（共 ${built.events.length} 筆加工事件）重建 ${built.changes.length} 筆 WIP 變動軌跡並完成繪圖！` +
+    (built.run.is_auto_imported ? `\n（並已同步寫入 Supabase 的 production_run 與 wip_timeline 資料表）` : `\n（目前為前端即時相容繪圖；若已在 Supabase 執行 SQL 建立新表，會自動寫入資料庫）`));
+}
+
+async function ieUpdateWipDashboard(group,viewRound){
+  const status=document.getElementById('ieWipStatus');
+  const flowKey=getFlowKeyForRound(group,viewRound);
+  try{
+    let runs=[];
+    let tablesReady=true;
+    try{
+      runs=await ieReadRows('production_run',
+        `group_id=eq.${encodeURIComponent(group)}&flow_key=eq.${encodeURIComponent(flowKey)}`+
+        `&select=*&order=created_at.desc`);
+    }catch(tableErr){
+      tablesReady=false;
+      console.warn('production_run 尚未建立或查詢失敗，啟動歷史 Event 自動推算模式：',tableErr.message);
+    }
+    let run=runs[0];
+    let changes=[],events=[];
+
+    if(run && tablesReady){
+      const [dbChanges,dbEvents]=await Promise.all([
+        ieReadRows('wip_timeline',`run_id=eq.${run.id}&select=*&order=id.asc`).catch(()=>[]),
+        ieReadRows('event',`run_id=eq.${run.id}&select=*&order=start_time.asc`).catch(()=>[])
+      ]);
+      changes=dbChanges;
+      events=dbEvents;
+      if(!events.length){
+        events=(currentEvents||[])
+          .filter(r=>r.group_id===group && isEventInTargetRoundAllStatus(r,viewRound) && r.start_time)
+          .sort((a,b)=>Date.parse(a.start_time)-Date.parse(b.start_time));
+      }
+      if(!changes.length && events.length){
+        const built=await ieReconstructAndImportHistoricalWip(group,viewRound,flowKey,tablesReady,true);
+        if(built){run=built.run;changes=built.changes;events=built.events;}
+      }
+    } else {
+      const built=await ieReconstructAndImportHistoricalWip(group,viewRound,flowKey,tablesReady,false);
+      if(built){
+        run=built.run;
+        changes=built.changes;
+        events=built.events;
+      }
+    }
+
+    if(!run){
+      ieDisplayedRun=null;ieWipAnalysis=null;
+      window.ieSelectedRunBufferMap=null;
+      status.textContent='此組、此場次尚無打卡紀錄或尚未建立 WIP 追蹤；第一支手機開啟後將建立場次，第一個 Start 開始觀察。';
+      ['ieAvgWip','ieMaxWip','ieStarvedTotal','ieStarvedAvg'].forEach(id=>document.getElementById(id).textContent='--');
+      document.querySelector('#ieBufferStats tbody').replaceChildren();
+      document.querySelector('#ieStarvedStats tbody').replaceChildren();
+      document.getElementById('ieWipChart').textContent='尚無 WIP 事件';
+      document.getElementById('ieCloseRunBtn').style.display='none';
+      return;
+    }
+    if(!ieDisplayedRun || ieDisplayedRun.id!==run.id){
+      document.getElementById('ieWipBufferSelect').value='TOTAL';
+    }
+    ieDisplayedRun=run;ieDisplayedWips=changes;ieDisplayedEvents=events;
+    const savedRate = localStorage.getItem(`ie_rework_rate_${group}`);
+    const rateEl = document.getElementById('ieReworkHourlyCost');
+    if (rateEl && savedRate !== null && rateEl.dataset.group !== group) rateEl.value = savedRate;
+    if (rateEl) rateEl.dataset.group = group;
+    ieUpdateReworkCost();
+    const analysis=ieComputeAnalysis(run,changes,events);
+    ieWipAnalysis=analysis;
+    window.ieSelectedRunBufferMap=analysis.lastBuffers;
+    window.ieSelectedRunFlowKey=flowKey;
+    const fmt=n=>Number(n||0).toFixed(2);
+    document.getElementById('ieAvgWip').textContent=analysis.valid?fmt(analysis.avgTotal)+' 件':'--';
+    document.getElementById('ieMaxWip').textContent=analysis.valid?analysis.maxTotal+' 件':'--';
+    document.getElementById('ieStarvedTotal').textContent=ieSeconds(analysis.starvedTotal)+' 秒';
+    document.getElementById('ieStarvedAvg').textContent=ieSeconds(analysis.starvedN?analysis.starvedTotal/analysis.starvedN:0)+' 秒';
+    const srcTag = run.is_auto_imported
+      ? '✅ 已由歷史 Event 自動匯入新表'
+      : (run.is_historical_reconstructed ? '📊 由歷史 Event 自動推算繪圖' : run.status);
+    status.textContent=`場次 ${run.flow_key}｜${srcTag}｜`+
+      (run.started_at?`起點 ${new Date(run.started_at).toLocaleString()}｜`:'尚未開始掃碼｜')+
+      (run.ended_at?`終點 ${new Date(run.ended_at).toLocaleString()}`:'分析至目前時刻')+
+      `｜WIP 事件 ${changes.length} 筆（加工紀錄 ${events.length} 筆）`;
+    document.getElementById('ieCloseRunBtn').style.display=isAdminLoggedIn && run.status==='ACTIVE' && !run.is_historical_reconstructed?'inline-block':'none';
+    const bufferTb=document.querySelector('#ieBufferStats tbody');bufferTb.replaceChildren();
+    analysis.perBuffer.forEach(r=>{
+      const tr=bufferTb.insertRow();[r.id,r.current,fmt(r.avg),r.max].forEach(x=>tr.insertCell().textContent=x);
+    });
+    const starveTb=document.querySelector('#ieStarvedStats tbody');starveTb.replaceChildren();
+    analysis.starved.forEach(r=>{
+      const tr=starveTb.insertRow();[r.station,r.count,ieSeconds(r.totalMs),ieSeconds(r.avgMs),ieSeconds(r.readyMs)].forEach(x=>tr.insertCell().textContent=x);
+    });
+    const sel=document.getElementById('ieWipBufferSelect'),prior=sel.value;
+    sel.replaceChildren();
+    [['TOTAL','全線合計'],...analysis.perBuffer.map(x=>[x.id,x.id])].forEach(([v,label])=>{
+      const opt=document.createElement('option');opt.value=v;opt.textContent=label;sel.appendChild(opt);
+    });
+    sel.value=[...sel.options].some(o=>o.value===prior)?prior:'TOTAL';
+    ieDrawSelectedWipChart();
+  }catch(e){status.textContent='WIP 分析失敗：'+e.message;console.error(e);}
+}
+
+function ieFormatClockShort(ms){
+  const d=new Date(ms);
+  const hh=String(d.getHours()).padStart(2,'0');
+  const mm=String(d.getMinutes()).padStart(2,'0');
+  const ss=String(d.getSeconds()).padStart(2,'0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function ieFormatElapsedLabel(sec){
+  const s=Math.max(0,Math.round(sec));
+  if(s<60) return `+${s}s`;
+  const m=Math.floor(s/60), r=s%60;
+  return r>0 ? `+${s}s (${m}m${r}s)` : `+${s}s (${m}m)`;
+}
+
+function ieDrawSelectedWipChart(){
+  const target=document.getElementById('ieWipChart');
+  const a=ieWipAnalysis;
+  if(!a||!a.valid){target.textContent='等待首筆開工事件';return;}
+  const buffer=document.getElementById('ieWipBufferSelect').value;
+  const xAxisMode=(document.getElementById('ieWipXAxisMode')?.value)||'BOTH';
+  const records=buffer==='TOTAL'?a.totalHistory:(a.history[buffer]||[]);
+  if(!records.length){target.textContent='此 Buffer 尚無 WIP 變化紀錄';return;}
+
+  const max=Math.max(1,...records.map(r=>r.y));
+  const avgVal=buffer==='TOTAL'
+    ? Number(a.avgTotal||0)
+    : Number((a.perBuffer.find(b=>b.id===buffer)?.avg)||0);
+
+  const W=860, H=320;
+  const padL=64, padR=36, padT=28, padB=64;
+  const plotW=W-padL-padR;
+  const plotH=H-padT-padB;
+  const baseY=padT+plotH;
+  const totalSpanMs=Math.max(1,a.end-a.start);
+
+  const x=t=>padL+Math.max(0,Math.min(1,(t-a.start)/totalSpanMs))*plotW;
+  const y=v=>baseY-plotH*(Math.max(0,v)/max);
+
+  // 1. 縱軸 (Y 軸) 完整整數刻度與水平虛線
+  const yStep = max<=10 ? 1 : (max<=25 ? 2 : (max<=50 ? 5 : Math.ceil(max/10)));
+  const yTicks=[];
+  for(let v=0;v<=max;v+=yStep) yTicks.push(v);
+  if(yTicks[yTicks.length-1]!==max) yTicks.push(max);
+
+  const yGridHtml=yTicks.map(v=>{
+    const py=y(v).toFixed(1);
+    const isZero=(v===0);
+    return `
+      <line x1="${padL}" y1="${py}" x2="${padL+plotW}" y2="${py}" stroke="${isZero?'#64748b':'#e2e8f0'}" stroke-width="${isZero?'1.5':'1'}" ${isZero?'':'stroke-dasharray="4 3"'}/>
+      <text x="${padL-10}" y="${(Number(py)+4).toFixed(1)}" text-anchor="end" font-size="12" font-weight="600" fill="#334155">${v} 件</text>`;
+  }).join('');
+
+  // 2. 橫軸 (X 軸) 多等分刻度 (經過秒數 + 實際時鐘時間) 與垂直格線
+  const xTickCount=6;
+  const xTicks=[];
+  for(let i=0;i<=xTickCount;i++){
+    const ratio=i/xTickCount;
+    const tMs=a.start+totalSpanMs*ratio;
+    const elapsedSec=(tMs-a.start)/1000;
+    xTicks.push({tMs,elapsedSec,px:padL+plotW*ratio});
+  }
+
+  const xGridHtml=xTicks.map((tk,idx)=>{
+    const px=tk.px.toFixed(1);
+    const isEdge=(idx===0||idx===xTicks.length-1);
+    const anchor=idx===0?'start':(idx===xTicks.length-1?'end':'middle');
+    const elStr=idx===0?'0s (起點)':ieFormatElapsedLabel(tk.elapsedSec);
+    const clkStr=ieFormatClockShort(tk.tMs);
+    let labelSvg='';
+    if(xAxisMode==='ELAPSED'){
+      labelSvg=`<text x="${px}" y="${baseY+22}" text-anchor="${anchor}" font-size="12" font-weight="700" fill="#0f766e">${elStr}</text>`;
+    }else if(xAxisMode==='CLOCK'){
+      labelSvg=`<text x="${px}" y="${baseY+22}" text-anchor="${anchor}" font-size="12" font-weight="600" fill="#334155">${clkStr}</text>`;
+    }else{
+      labelSvg=`
+        <text x="${px}" y="${baseY+20}" text-anchor="${anchor}" font-size="12" font-weight="700" fill="#0f766e">${elStr}</text>
+        <text x="${px}" y="${baseY+37}" text-anchor="${anchor}" font-size="11" fill="#64748b">${clkStr}</text>`;
+    }
+    return `
+      <line x1="${px}" y1="${padT}" x2="${px}" y2="${baseY}" stroke="${isEdge?'#94a3b8':'#f1f5f9'}" stroke-width="1"/>
+      <line x1="${px}" y1="${baseY}" x2="${px}" y2="${baseY+5}" stroke="#64748b" stroke-width="1.5"/>
+      ${labelSvg}`;
+  }).join('');
+
+  // 3. 階梯折線與下方淡色面積填滿
+  const points=[];
+  const areaPoints=[`M ${x(records[0].t).toFixed(1)} ${baseY.toFixed(1)}`];
+  records.forEach((p,i)=>{
+    const px=x(p.t).toFixed(1), py=y(p.y).toFixed(1);
+    if(i===0){
+      points.push(`M ${px} ${py}`);
+      areaPoints.push(`L ${px} ${py}`);
+      return;
+    }
+    points.push(`H ${px} V ${py}`);
+    areaPoints.push(`H ${px} V ${py}`);
+  });
+  const lastPx=x(records[records.length-1].t).toFixed(1);
+  areaPoints.push(`L ${lastPx} ${baseY.toFixed(1)} Z`);
+
+  // 4. 平均 WIP 水平基準虛線
+  let avgLineHtml='';
+  if(avgVal>0 && avgVal<=max){
+    const avgPy=y(avgVal).toFixed(1);
+    avgLineHtml=`
+      <line x1="${padL}" y1="${avgPy}" x2="${padL+plotW}" y2="${avgPy}" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="6 4"/>
+      <rect x="${padL+plotW-128}" y="${(Number(avgPy)-18).toFixed(1)}" width="124" height="17" rx="4" fill="#fffbeb" stroke="#fcd34d" stroke-width="1"/>
+      <text x="${padL+plotW-66}" y="${(Number(avgPy)-6).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#b45309">平均 WIP: ${avgVal.toFixed(2)} 件</text>`;
+  }
+
+  // 5. 整理每個時間點的觸發事件說明，供游標滑到圓點時顯示座標與原因
+  const changesByTime={};
+  (ieDisplayedWips||[]).forEach(ch=>{
+    if(buffer!=='TOTAL' && ch.buffer_id!==buffer) return;
+    const tMs=Date.parse(ch.event_time);
+    if(!Number.isFinite(tMs)) return;
+    if(!changesByTime[tMs]) changesByTime[tMs]=[];
+    const actLabel = ch.action==='FINISH_PRODUCE'
+      ? `${ch.station_id} 完工送出 (+${ch.delta} ➔ ${ch.buffer_id})`
+      : (ch.action==='START_CONSUME'
+          ? `${ch.station_id} 開工領用 (${ch.delta} 自 ${ch.buffer_id})`
+          : `${ch.buffer_id} 初始備料 (+${ch.delta})`);
+    changesByTime[tMs].push(actLabel);
+  });
+
+  // 6. 每個轉折座標點圓點 (含隱形放大感應區 + 最高峰高亮紅點)
+  const dotsHtml=records.map((p,i)=>{
+    const px=x(p.t).toFixed(1), py=y(p.y).toFixed(1);
+    const elapsedSec=((p.t-a.start)/1000).toFixed(1);
+    const clockFull=new Date(p.t).toLocaleTimeString();
+    const nextT=(i<records.length-1)?records[i+1].t:p.t;
+    const holdSec=Math.max(0,(nextT-p.t)/1000).toFixed(1);
+    const isPeak=(p.y===max && max>0);
+    const reasons=(changesByTime[p.t]||[]).slice(0,4).join('；') || (i===0?'場次觀測起點':(i===records.length-1?'場次觀測終點':'狀態延續'));
+    const dotColor=isPeak?'#dc2626':'#0d9488';
+    const dotRadius=isPeak?'5.5':'4';
+    return `
+      <g class="ie-wip-dot-group" style="cursor:pointer;"
+         data-px="${px}" data-py="${py}"
+         data-elapsed="${elapsedSec}"
+         data-clock="${clockFull}"
+         data-wip="${p.y}"
+         data-hold="${holdSec}"
+         data-peak="${isPeak?'1':'0'}"
+         data-reason="${reasons.replace(/"/g,'&quot;')}">
+        <circle cx="${px}" cy="${py}" r="12" fill="transparent"/>
+        <circle class="ie-wip-dot" cx="${px}" cy="${py}" r="${dotRadius}" fill="${dotColor}" stroke="#ffffff" stroke-width="1.8"/>
+      </g>`;
+  }).join('');
+
+  const axisTitleHtml=`
+    <text x="${padL-46}" y="${padT-10}" text-anchor="start" font-size="12" font-weight="700" fill="#334155">▲ 在製品數量 (WIP 件數)</text>
+    <text x="${padL+plotW/2}" y="${H-6}" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">生產活動時間軸（總歷時 ${((a.end-a.start)/1000).toFixed(1)} 秒） ➔</text>`;
+
+  const svg=`
+    <svg id="ieWipSvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;min-width:560px;display:block;user-select:none;" role="img" aria-label="${buffer} WIP 階梯時間圖">
+      <defs>
+        <linearGradient id="ieWipAreaGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#14b8a6" stop-opacity="0.26"/>
+          <stop offset="100%" stop-color="#14b8a6" stop-opacity="0.03"/>
+        </linearGradient>
+      </defs>
+      ${yGridHtml}
+      ${xGridHtml}
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseY}" stroke="#64748b" stroke-width="1.5"/>
+      <path d="${areaPoints.join(' ')}" fill="url(#ieWipAreaGrad)"/>
+      ${avgLineHtml}
+      <path d="${points.join(' ')}" fill="none" stroke="#0d9488" stroke-width="2.6" stroke-linejoin="round"/>
+      <line id="ieWipHoverVLine" x1="0" y1="${padT}" x2="0" y2="${baseY}" stroke="#0f172a" stroke-width="1" stroke-dasharray="3 3" style="display:none;pointer-events:none;"/>
+      ${dotsHtml}
+      ${axisTitleHtml}
+    </svg>
+    <div id="ieWipTooltip" style="display:none;position:absolute;pointer-events:none;z-index:20;background:rgba(15,23,42,0.94);color:#f8fafc;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;box-shadow:0 10px 15px -3px rgba(0,0,0,0.25);border:1px solid #334155;min-width:210px;max-width:320px;"></div>`;
+
+  target.innerHTML=svg;
+
+  // 綁定游標滑過圓點時的互動座標 Tooltip
+  const tooltip=document.getElementById('ieWipTooltip');
+  const vLine=document.getElementById('ieWipHoverVLine');
+  const svgEl=document.getElementById('ieWipSvg');
+  target.querySelectorAll('.ie-wip-dot-group').forEach(g=>{
+    g.addEventListener('mouseenter',()=>{
+      const elapsed=g.dataset.elapsed;
+      const clock=g.dataset.clock;
+      const wip=g.dataset.wip;
+      const hold=g.dataset.hold;
+      const isPeak=g.dataset.peak==='1';
+      const reason=g.dataset.reason;
+      const px=Number(g.dataset.px);
+      const py=Number(g.dataset.py);
+      const dot=g.querySelector('.ie-wip-dot');
+      if(dot) dot.setAttribute('r','7');
+      if(vLine){
+        vLine.setAttribute('x1',String(px));
+        vLine.setAttribute('x2',String(px));
+        vLine.style.display='block';
+      }
+      const peakBadge=isPeak?`<span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px;margin-left:6px;font-weight:700;">🔥 最高峰</span>`:'';
+      tooltip.innerHTML=`
+        <div style="font-weight:800;font-size:13px;color:#5eead4;margin-bottom:4px;border-bottom:1px solid #334155;padding-bottom:3px;">
+          📍 座標點 (X: +${elapsed}s, Y: ${wip} 件)${peakBadge}
+        </div>
+        <div>⏱️ <b>開工經過時間：</b>+${elapsed} 秒</div>
+        <div>🕒 <b>實際打卡時刻：</b>${clock}</div>
+        <div>📦 <b>當下在製品數：</b><b style="color:#fde047;font-size:13px;">${wip} 件</b>（維持 ${hold} 秒）</div>
+        <div style="margin-top:4px;color:#cbd5e1;font-size:11px;border-top:1px dashed #334155;padding-top:3px;">🔧 <b>事件：</b>${reason}</div>`;
+      tooltip.style.display='block';
+
+      const svgRect=svgEl.getBoundingClientRect();
+      const wrapRect=target.getBoundingClientRect();
+      const scaleX=svgRect.width/W;
+      const scaleY=svgRect.height/H;
+      const clientX=(svgRect.left-wrapRect.left)+px*scaleX+target.scrollLeft;
+      const clientY=(svgRect.top-wrapRect.top)+py*scaleY;
+      const tipW=tooltip.offsetWidth||240;
+      const tipH=tooltip.offsetHeight||120;
+      let leftPos=clientX+14;
+      if(leftPos+tipW > target.scrollLeft+target.clientWidth-10){
+        leftPos=clientX-tipW-14;
+      }
+      let topPos=Math.max(8, clientY-tipH-10);
+      tooltip.style.left=`${Math.max(8,leftPos)}px`;
+      tooltip.style.top=`${topPos}px`;
+    });
+    g.addEventListener('mouseleave',()=>{
+      const isPeak=g.dataset.peak==='1';
+      const dot=g.querySelector('.ie-wip-dot');
+      if(dot) dot.setAttribute('r',isPeak?'5.5':'4');
+      if(vLine) vLine.style.display='none';
+      tooltip.style.display='none';
+    });
+  });
+}
+
+function ieUpdateReworkCost(){
+  const group = ieDisplayedRun?.group_id;
+  const rateEl = document.getElementById('ieReworkHourlyCost');
+  if (!group || !rateEl) return;
+  const rate = Math.max(0, Number(rateEl.value) || 0);
+  localStorage.setItem(`ie_rework_rate_${group}`,String(rate));
+  const rw = new Set((ieDisplayedRun.flow_snapshot || [])
+     .filter(f=>f.line_type==='REWORK').map(f=>f.station_id));
+  const done = ieDisplayedEvents.filter(ev=>ev.status==='COMPLETED' && rw.has(ev.station_id));
+  const total = done.reduce((acc,ev)=>acc+(Number(ev.duration_sec)||0),0);
+  document.getElementById('ieReworkSummary').textContent =
+    `重工完成 ${done.length} 件｜累計 ${total.toFixed(1)} 秒｜平均 ${done.length?(total/done.length).toFixed(1):'0.0'} 秒／件`;
+  document.getElementById('ieReworkCost').textContent =
+    `估計成本：${(total/3600*rate).toFixed(2)} 元`;
+}
+
+function ieExportWipCsv(){
+  if(!ieDisplayedRun||!ieDisplayedWips.length){alert('沒有可匯出的 WIP 事件');return;}
+  const cols=['run_id','group_id','flow_key','buffer_id','station_id','action','delta','wip_after','event_id','event_time'];
+  const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+  const lines=[cols.join(','),...ieDisplayedWips.map(r=>cols.map(c=>quote(r[c])).join(','))];
+  const blob=new Blob(['\uFEFF',lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`WIP_${ieDisplayedRun.flow_key}_${String(ieDisplayedRun.id).slice(0,8)}.csv`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+async function ieCloseSelectedRun(){
+  if(!isAdminLoggedIn||!ieDisplayedRun||ieDisplayedRun.status!=='ACTIVE')return;
+  if(!confirm('確定結束本次生產觀察？結束後須重置本場次才可以重新開工。'))return;
+  try{await ieRpc('ie_close_run',{p_run_id:ieDisplayedRun.id});await loadAll(true);}
+  catch(e){alert('結束場次失敗：'+e.message);}
+}
 </script>
 </body>
 </html>

@@ -3162,13 +3162,15 @@ function ieComputeAnalysis(run,changes,events) {
   const edgeSet = new Set(edges);
   edges.forEach(id=>{balance[id]=0;areas[id]=0;maxima[id]=0;history[id]=[];});
   const changesSorted = [...changes].sort((a,b)=>Date.parse(a.event_time)-Date.parse(b.event_time)||a.id-b.id);
-  changesSorted.filter(x=>Date.parse(x.event_time)<=start).forEach(x=>{byId[x.buffer_id]=x.wip_after;if(edgeSet.has(x.buffer_id))balance[x.buffer_id]=x.wip_after;});
+  // 僅將「嚴格早於 start (t < start)」的 INIT 初始備料事件作為起點基準，
+  // 這樣在 t === start (0s 起點) 發生的第 1 筆開工扣料 (-1) 就會在圖上完整畫出「從初始總 WIP (如 2×2=4 件) 扣減為 2 件」的起點轉折！
+  changesSorted.filter(x=>Date.parse(x.event_time)<start).forEach(x=>{byId[x.buffer_id]=x.wip_after;if(edgeSet.has(x.buffer_id))balance[x.buffer_id]=x.wip_after;});
   let total = Object.values(balance).reduce((a,b)=>a+b,0), totalArea=0,maxTotal=total,last=start;
   let activeDurationMs=0;
   let totalHistory=[{t:start,y:total}];
   edges.forEach(id=>{maxima[id]=balance[id]; history[id].push({t:start,y:balance[id]});});
   let index=0;
-  while(index<changesSorted.length && Date.parse(changesSorted[index].event_time)<=start)index++;
+  while(index<changesSorted.length && Date.parse(changesSorted[index].event_time)<start)index++;
   while(valid && index<changesSorted.length){
     const t=Date.parse(changesSorted[index].event_time);
     if(t>end)break;
@@ -3193,8 +3195,11 @@ function ieComputeAnalysis(run,changes,events) {
   totalArea+=total*rest;totalHistory.push({t:end,y:total});
   const T=Math.max(1,activeDurationMs);
 
-  const stations=[...new Set(flow.filter(f=>f.line_type!=='REWORK')
-    .map(f=>f.station_id))];
+  const stations=[...new Set(
+    flow.filter(f=>f.line_type!=='REWORK')
+      .flatMap(f=>[f.station_id, f.next_station_id])
+      .filter(Boolean)
+  )];
   const starved=[];
   let starvedTotal=0,starvedN=0,readyTotal=0;
   for(const st of stations){
@@ -3345,10 +3350,27 @@ async function ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, ca
     }
   });
 
+  // 讀取初始半成品備料套數 (subInit)：
+  // 1. 優先讀取 localStorage (ie_chair_group_station_raw)
+  // 2. 若無則自動從該站第 1 筆開工紀錄的 wip_before_start 與開工前上游已完工數反推初始備料套數！
+  //    例如 ST03 在 09:43:56 開工第 1 件時 wip_before_start = 2（代表初始預設有 2 組半成品，前置工站有 ST01、ST02 共 2 站，
+  //    則每條前置 Buffer [ST01_ST03, ST02_ST03] 初始各放入 2 件，全線初始總 WIP = 前置工站數 2 × 可開工套數 2 = 4 件！）
   const allRaw = JSON.parse(localStorage.getItem('ie_chair_group_station_raw') || '{}');
   const groupRaw = allRaw[flowKey] || allRaw[group] || {};
   Object.keys(predsMap).forEach(st => {
-    const subInit = Number(groupRaw[st]?.subInit || 0);
+    let subInit = Number(groupRaw[st]?.subInit || 0);
+    const stFirstEv = roundEvents.find(e => (e.station_id || '').trim() === st && e.start_time);
+    if (stFirstEv && stFirstEv.wip_before_start != null) {
+      const wb = Number(stFirstEv.wip_before_start);
+      if (Number.isFinite(wb) && wb > 0 && wb < 900) {
+        const firstStartMs = Date.parse(stFirstEv.start_time);
+        const minPredDoneBeforeFirst = Math.min(...predsMap[st].map(p =>
+          roundEvents.filter(e => (e.station_id || '').trim() === p && e.finish_time && Date.parse(e.finish_time) <= firstStartMs).length
+        ));
+        const inferredInitSets = Math.max(0, wb - (Number.isFinite(minPredDoneBeforeFirst) ? minPredDoneBeforeFirst : 0));
+        if (inferredInitSets > subInit) subInit = inferredInitSets;
+      }
+    }
     if (subInit > 0) {
       predsMap[st].forEach(p => {
         rawDeltas.push({
@@ -3541,6 +3563,9 @@ async function ieUpdateWipDashboard(group,viewRound){
     }
     let run=runs[0];
     let changes=[],events=[];
+    const liveRoundEvents=(currentEvents||[])
+      .filter(r=>r.group_id===group && isEventInTargetRoundAllStatus(r,viewRound) && r.start_time)
+      .sort((a,b)=>Date.parse(a.start_time)-Date.parse(b.start_time));
 
     if(run && tablesReady){
       const [dbChanges,dbEvents]=await Promise.all([
@@ -3549,12 +3574,15 @@ async function ieUpdateWipDashboard(group,viewRound){
       ]);
       changes=dbChanges;
       events=dbEvents;
-      if(!events.length){
-        events=(currentEvents||[])
-          .filter(r=>r.group_id===group && isEventInTargetRoundAllStatus(r,viewRound) && r.start_time)
-          .sort((a,b)=>Date.parse(a.start_time)-Date.parse(b.start_time));
+      if(!events.length || liveRoundEvents.length > events.length){
+        events=liveRoundEvents;
       }
-      if(!changes.length && events.length){
+      // 當有新打卡數據產生（或舊表尚未同步最新一筆 event 的開工/完工時間）時，自動同步重建最新 WIP 時間軸並更新圖表！
+      const latestEvMs = liveRoundEvents.length
+        ? Math.max(...liveRoundEvents.map(e=>Date.parse(e.finish_time||e.start_time)).filter(Number.isFinite))
+        : 0;
+      const runEndMs = run.ended_at ? Date.parse(run.ended_at) : 0;
+      if((!changes.length && events.length) || (liveRoundEvents.length > 0 && latestEvMs > runEndMs + 500)){
         const built=await ieReconstructAndImportHistoricalWip(group,viewRound,flowKey,tablesReady,true);
         if(built){run=built.run;changes=built.changes;events=built.events;}
       }
@@ -3733,7 +3761,7 @@ function ieDrawSelectedWipChart(){
       <text x="${padL+plotW-66}" y="${(Number(avgPy)-6).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#b45309">平均 WIP: ${avgVal.toFixed(2)} 件</text>`;
   }
 
-  // 5. 整理每個時間點的觸發事件說明，供游標滑到圓點時顯示座標與原因
+  // 5. 整理每個時間點的觸發事件說明，並把所有加工紀錄 (events) 的開工與完工時刻也合併進圖表圓點中，確保每筆新數據都在圖上顯示！
   const changesByTime={};
   (ieDisplayedWips||[]).forEach(ch=>{
     if(buffer!=='TOTAL' && ch.buffer_id!==buffer) return;
@@ -3745,18 +3773,67 @@ function ieDrawSelectedWipChart(){
       : (ch.action==='START_CONSUME'
           ? `${ch.station_id} 開工領用 (${ch.delta} 自 ${ch.buffer_id})`
           : `${ch.buffer_id} 初始備料 (+${ch.delta})`);
-    changesByTime[tMs].push(actLabel);
+    if(!changesByTime[tMs].includes(actLabel)) changesByTime[tMs].push(actLabel);
   });
 
-  // 6. 每個轉折座標點圓點 (含隱形放大感應區 + 最高峰高亮紅點)
-  const dotsHtml=records.map((p,i)=>{
+  // 將每一筆加工 event 的開工與完工時間也標記到對應時刻，即使該事件未改變特定 Buffer 餘額（如終點站完工或起始站開工），也會在階梯線上顯示圓點！
+  const extraEventTimes=new Set();
+  (ieDisplayedEvents||[]).forEach(ev=>{
+    const st=(ev.station_id||'').trim();
+    const pid=ev.product_id||'';
+    if(buffer!=='TOTAL'){
+      const [u,v]=buffer.split('_');
+      if(st!==u && st!==v) return;
+    }
+    if(ev.start_time){
+      const sMs=Date.parse(ev.start_time);
+      if(Number.isFinite(sMs) && sMs>=a.start && sMs<=a.end){
+        extraEventTimes.add(sMs);
+        if(!changesByTime[sMs]) changesByTime[sMs]=[];
+        const lbl=`${st} 開工 (${pid})`;
+        if(!changesByTime[sMs].some(x=>x.includes(`${st} 開工`))) changesByTime[sMs].push(lbl);
+      }
+    }
+    if(ev.finish_time){
+      const fMs=Date.parse(ev.finish_time);
+      if(Number.isFinite(fMs) && fMs>=a.start && fMs<=a.end){
+        extraEventTimes.add(fMs);
+        if(!changesByTime[fMs]) changesByTime[fMs]=[];
+        const lbl=`${st} 完工 (${pid})`;
+        if(!changesByTime[fMs].some(x=>x.includes(`${st} 完工`))) changesByTime[fMs].push(lbl);
+      }
+    }
+  });
+
+  // 合併階梯變化點與所有單筆數據時間點（保留同一時刻的「初始備料值」與「首筆開工扣減後數值」兩個點，讓每筆新數據與起點轉折都在圖上產生可互動圓點）
+  const baseKeys=new Set(records.map(r=>r.t));
+  const extraOnly=[...extraEventTimes].filter(t=>!baseKeys.has(t)).sort((a,b)=>a-b);
+  const plotRecords=[];
+  let eIdx=0, curY=records[0]?.y||0;
+  for(let i=0;i<records.length;i++){
+    const r=records[i];
+    while(eIdx<extraOnly.length && extraOnly[eIdx]<r.t){
+      plotRecords.push({t:extraOnly[eIdx++], y:curY});
+    }
+    curY=r.y;
+    const isInitPoint=(i===0 && i+1<records.length && records[i+1].t===r.t);
+    plotRecords.push({t:r.t, y:r.y, isInitPoint});
+  }
+  while(eIdx<extraOnly.length){
+    plotRecords.push({t:extraOnly[eIdx++], y:curY});
+  }
+
+  // 6. 每個轉折座標點與每筆新數據圓點 (含隱形放大感應區 + 最高峰高亮紅點)
+  const dotsHtml=plotRecords.map((p,i)=>{
     const px=x(p.t).toFixed(1), py=y(p.y).toFixed(1);
     const elapsedSec=((p.t-a.start)/1000).toFixed(1);
     const clockFull=new Date(p.t).toLocaleTimeString();
-    const nextT=(i<records.length-1)?records[i+1].t:p.t;
+    const nextT=(i<plotRecords.length-1)?plotRecords[i+1].t:p.t;
     const holdSec=Math.max(0,(nextT-p.t)/1000).toFixed(1);
     const isPeak=(p.y===max && max>0);
-    const reasons=(changesByTime[p.t]||[]).slice(0,4).join('；') || (i===0?'場次觀測起點':(i===records.length-1?'場次觀測終點':'狀態延續'));
+    const reasons=p.isInitPoint
+      ? `場次初始預設 WIP（前置工站數 × 可開工套數 = ${p.y} 件）`
+      : ((changesByTime[p.t]||[]).slice(0,5).join('；') || (i===0?'場次觀測起點':(i===plotRecords.length-1?'場次觀測終點':'狀態延續')));
     const dotColor=isPeak?'#dc2626':'#0d9488';
     const dotRadius=isPeak?'5.5':'4';
     return `

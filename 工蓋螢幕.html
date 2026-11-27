@@ -427,6 +427,7 @@
           <th>Station</th>
           <th>工站料號</th>
           <th>開工齊套數</th>
+          <th>日期</th>
           <th>開始時間</th>
           <th>結束時間</th>
           <th>作業秒數</th>
@@ -2657,6 +2658,9 @@ function showTable(data) {
       wipDisplay = `<span style="color:#94a3b8;">-</span>`;
     }
 
+    const stSplit = splitToTaiwanDateAndTime(row.start_time);
+    const fnSplit = splitToTaiwanDateAndTime(row.finish_time);
+
     const values = [
       shortId,
       row.group_id,
@@ -2670,8 +2674,9 @@ function showTable(data) {
       flowInfo.html,
       partNo ? `<span style="color:#1e40af; font-weight:bold;">${partNo}</span>` : "-",
       wipDisplay,
-      row.start_time ? new Date(row.start_time).toLocaleTimeString() : "",
-      row.finish_time ? new Date(row.finish_time).toLocaleTimeString() : "",
+      row.start_date || stSplit.date || fnSplit.date || "-",
+      row.start_clock || stSplit.clock || "",
+      row.finish_clock || fnSplit.clock || "",
       (row.duration_sec !== null && row.duration_sec !== undefined) ? Number(row.duration_sec).toFixed(1) : "-",
       row.wip_after_finish ?? "-",
       row.status
@@ -3083,15 +3088,34 @@ function showStats(data) {
   }
 }
 
-// 下載 CSV (含各測試場次專屬流程關係與本次生產活動 Cycle Time 摘要)
+// 將任意 ISO / UTC 時間拆解為台灣時區 (Asia/Taipei, UTC+8) 的「日期 (YYYY-MM-DD)」與「時間 (HH:MM:SS.mmm)」，去掉 T 與 +00:00，方便 Excel 直接讀取與計算
+function splitToTaiwanDateAndTime(isoStr) {
+  if (!isoStr) return { date: "", clock: "", clockSec: "" };
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return { date: "", clock: "", clockSec: "" };
+  const tw = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const isoTw = tw.toISOString(); // YYYY-MM-DDTHH:MM:SS.mmmZ
+  const datePart = isoTw.slice(0, 10);
+  const clockMsPart = isoTw.slice(11, 23);
+  const clockSecPart = isoTw.slice(11, 19);
+  return { date: datePart, clock: clockMsPart, clockSec: clockSecPart };
+}
+
+// 下載 CSV (含各測試場次專屬流程關係、拆開的台灣日期/時間欄位與本次生產活動 Cycle Time 摘要)
 document.getElementById("downloadBtn").onclick = () => {
   if (currentEvents.length === 0) return;
-  const cols = ["id","group_id","round_flow_id","product_id","station_id","station_flow","part_no","wip_before_start","start_time","finish_time","duration_sec","wip_after_finish","status"];
+  const cols = [
+    "id","group_id","round_flow_id","product_id","station_id","station_flow","part_no","wip_before_start",
+    "start_date","start_clock","finish_date","finish_clock",
+    "start_time","finish_time","duration_sec","wip_after_finish","status"
+  ];
   const csvRows = [cols.join(",")];
 
   currentEvents.forEach(row => {
     const partNo = getStationPart(row.group_id, row.station_id);
     const flowInfo = getStationFlowInfoForEvent(row);
+    const stSplit = splitToTaiwanDateAndTime(row.start_time);
+    const fnSplit = splitToTaiwanDateAndTime(row.finish_time);
     const r = [
       row.id,
       row.group_id,
@@ -3101,6 +3125,10 @@ document.getElementById("downloadBtn").onclick = () => {
       `"${flowInfo.csvFlow || row.station_id || ''}"`,
       `"${partNo || ''}"`,
       row.wip_before_start ?? "",
+      row.start_date || stSplit.date,
+      row.start_clock || stSplit.clock,
+      row.finish_date || fnSplit.date,
+      row.finish_clock || fnSplit.clock,
       row.start_time ?? "",
       row.finish_time ?? "",
       row.duration_sec ?? "",
@@ -3432,6 +3460,7 @@ async function ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, ca
     const after = Math.max(0, cur + d.delta);
     const actualDelta = after - cur;
     runningBalance[d.buffer_id] = after;
+    const evSplit = splitToTaiwanDateAndTime(d.event_time);
     return {
       id: idx + 1,
       group_id: group,
@@ -3442,6 +3471,8 @@ async function ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, ca
       delta: actualDelta,
       wip_after: after,
       event_id: d.event_id,
+      event_date: evSplit.date,
+      event_clock: evSplit.clock,
       event_time: d.event_time
     };
   });
@@ -3490,18 +3521,28 @@ async function ieReconstructAndImportHistoricalWip(group, viewRound, flowKey, ca
           run = insertedRuns[0];
           run.is_auto_imported = true;
           if (changes.length > 0) {
-            const timelinePayload = changes.map(c => ({
-              run_id: run.id,
-              group_id: c.group_id,
-              flow_key: c.flow_key,
-              buffer_id: c.buffer_id,
-              station_id: c.station_id,
-              action: c.action,
-              delta: c.delta,
-              wip_after: c.wip_after,
-              event_id: c.event_id,
-              event_time: c.event_time
-            }));
+            const timelinePayload = changes.map(c => {
+              const parts = String(c.buffer_id || '').split('_');
+              return {
+                run_id: run.id,
+                group_id: c.group_id,
+                flow_key: c.flow_key,
+                buffer_id: c.buffer_id,
+                from_station: parts[0] || c.station_id,
+                to_station: parts[1] || null,
+                station_id: c.station_id,
+                event_type: c.action,
+                action: c.action,
+                delta_wip: c.delta,
+                delta: c.delta,
+                wip_after: c.wip_after,
+                source_event_id: c.event_id,
+                event_id: c.event_id,
+                event_date: c.event_date,
+                event_clock: c.event_clock,
+                event_time: c.event_time
+              };
+            });
             for (let i = 0; i < timelinePayload.length; i += 500) {
               await fetch(`${SUPABASE_URL}/rest/v1/wip_timeline`, {
                 method: 'POST',
@@ -3665,6 +3706,84 @@ function ieFormatElapsedLabel(sec){
   return r>0 ? `+${s}s (${m}m${r}s)` : `+${s}s (${m}m)`;
 }
 
+// 建立「自動折疊 >600 秒中場休息/跨天停機空窗」的壓縮有效時間軸映射器
+function ieBuildCompressedTimeMapper(startMs, endMs, allTimesMs) {
+  const PAUSE_LIMIT = typeof IE_IDLE_PAUSE_LIMIT_MS === 'number' ? IE_IDLE_PAUSE_LIMIT_MS : 600000;
+  const VISUAL_PAUSE_MS = 15000; // 被折疊的跨天/下課空窗在圖上只留 15 秒的視覺分隔寬度
+  const sorted = [...new Set([startMs, endMs, ...allTimesMs.filter(t => Number.isFinite(t) && t >= startMs && t <= endMs)])].sort((a, b) => a - b);
+
+  const anchors = [{ real: sorted[0], virt: 0, active: 0, isBreakAfter: false, breakSec: 0 }];
+  let virtAcc = 0, activeAcc = 0;
+  const breaks = [];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const dt = Math.max(0, sorted[i] - sorted[i - 1]);
+    if (dt > PAUSE_LIMIT) {
+      anchors[anchors.length - 1].isBreakAfter = true;
+      anchors[anchors.length - 1].breakSec = Math.round(dt / 1000);
+      breaks.push({
+        fromReal: sorted[i - 1],
+        toReal: sorted[i],
+        virtMid: virtAcc + VISUAL_PAUSE_MS / 2,
+        breakSec: Math.round(dt / 1000)
+      });
+      virtAcc += VISUAL_PAUSE_MS;
+    } else {
+      virtAcc += dt;
+      activeAcc += dt;
+    }
+    anchors.push({ real: sorted[i], virt: virtAcc, active: activeAcc, isBreakAfter: false, breakSec: 0 });
+  }
+
+  const totalVirtMs = Math.max(1, virtAcc);
+  const totalActiveMs = Math.max(1, activeAcc);
+
+  function toVirt(tMs) {
+    if (tMs <= anchors[0].real) return 0;
+    if (tMs >= anchors[anchors.length - 1].real) return totalVirtMs;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const a0 = anchors[i], a1 = anchors[i + 1];
+      if (tMs >= a0.real && tMs <= a1.real) {
+        const span = Math.max(1, a1.real - a0.real);
+        return a0.virt + ((tMs - a0.real) / span) * (a1.virt - a0.virt);
+      }
+    }
+    return totalVirtMs;
+  }
+
+  function toActiveSec(tMs) {
+    if (tMs <= anchors[0].real) return 0;
+    if (tMs >= anchors[anchors.length - 1].real) return totalActiveMs / 1000;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const a0 = anchors[i], a1 = anchors[i + 1];
+      if (tMs >= a0.real && tMs <= a1.real) {
+        if (a0.isBreakAfter) return a0.active / 1000;
+        const span = Math.max(1, a1.real - a0.real);
+        return (a0.active + ((tMs - a0.real) / span) * (a1.active - a0.active)) / 1000;
+      }
+    }
+    return totalActiveMs / 1000;
+  }
+
+  function fromVirtRatio(ratio) {
+    const targetV = Math.max(0, Math.min(1, ratio)) * totalVirtMs;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const a0 = anchors[i], a1 = anchors[i + 1];
+      if (targetV >= a0.virt && targetV <= a1.virt) {
+        const vSpan = Math.max(1, a1.virt - a0.virt);
+        const r = (targetV - a0.virt) / vSpan;
+        const realMs = a0.real + r * (a1.real - a0.real);
+        const activeSec = a0.isBreakAfter ? (a0.active / 1000) : ((a0.active + r * (a1.active - a0.active)) / 1000);
+        return { realMs, activeSec };
+      }
+    }
+    const last = anchors[anchors.length - 1];
+    return { realMs: last.real, activeSec: last.active / 1000 };
+  }
+
+  return { totalVirtMs, totalActiveMs, breaks, toVirt, toActiveSec, fromVirtRatio };
+}
+
 function ieDrawSelectedWipChart(){
   const target=document.getElementById('ieWipChart');
   const a=ieWipAnalysis;
@@ -3684,9 +3803,16 @@ function ieDrawSelectedWipChart(){
   const plotW=W-padL-padR;
   const plotH=H-padT-padB;
   const baseY=padT+plotH;
-  const totalSpanMs=Math.max(1,a.end-a.start);
 
-  const x=t=>padL+Math.max(0,Math.min(1,(t-a.start)/totalSpanMs))*plotW;
+  // 收集所有事件時間點並建立「自動折疊 >600 秒中場休息/跨天停機空窗」的時間映射器
+  const allEventMs=[
+    ...records.map(r=>r.t),
+    ...(ieDisplayedWips||[]).map(c=>Date.parse(c.event_time)).filter(Number.isFinite),
+    ...(ieDisplayedEvents||[]).flatMap(e=>[Date.parse(e.start_time),Date.parse(e.finish_time)]).filter(Number.isFinite)
+  ];
+  const mapper=ieBuildCompressedTimeMapper(a.start, a.end, allEventMs);
+
+  const x=t=>padL+Math.max(0,Math.min(1,mapper.toVirt(t)/mapper.totalVirtMs))*plotW;
   const y=v=>baseY-plotH*(Math.max(0,v)/max);
 
   // 1. 縱軸 (Y 軸) 完整整數刻度與水平虛線
@@ -3703,14 +3829,13 @@ function ieDrawSelectedWipChart(){
       <text x="${padL-10}" y="${(Number(py)+4).toFixed(1)}" text-anchor="end" font-size="12" font-weight="600" fill="#334155">${v} 件</text>`;
   }).join('');
 
-  // 2. 橫軸 (X 軸) 多等分刻度 (經過秒數 + 實際時鐘時間) 與垂直格線
+  // 2. 橫軸 (X 軸) 多等分刻度 (依折疊後之有效作業秒數 + 對應實際時鐘時間) 與垂直格線
   const xTickCount=6;
   const xTicks=[];
   for(let i=0;i<=xTickCount;i++){
     const ratio=i/xTickCount;
-    const tMs=a.start+totalSpanMs*ratio;
-    const elapsedSec=(tMs-a.start)/1000;
-    xTicks.push({tMs,elapsedSec,px:padL+plotW*ratio});
+    const mapped=mapper.fromVirtRatio(ratio);
+    xTicks.push({tMs:mapped.realMs,elapsedSec:mapped.activeSec,px:padL+plotW*ratio});
   }
 
   const xGridHtml=xTicks.map((tk,idx)=>{
@@ -3733,6 +3858,17 @@ function ieDrawSelectedWipChart(){
       <line x1="${px}" y1="${padT}" x2="${px}" y2="${baseY}" stroke="${isEdge?'#94a3b8':'#f1f5f9'}" stroke-width="1"/>
       <line x1="${px}" y1="${baseY}" x2="${px}" y2="${baseY+5}" stroke="#64748b" stroke-width="1.5"/>
       ${labelSvg}`;
+  }).join('');
+
+  // 若有被自動折疊的跨天/下課空窗 (>600s)，在圖上畫出淡紫色「⏸️ 已折疊跨堂空窗」分隔虛線標記
+  const breakLinesHtml=mapper.breaks.map(b=>{
+    const bPx=(padL+(b.virtMid/mapper.totalVirtMs)*plotW).toFixed(1);
+    const bMin=Math.round(b.breakSec/60);
+    const bLabel=bMin>=60?`⏸️已折疊跨天休假(${(bMin/60).toFixed(1)}h)`:`⏸️已折疊空窗(${bMin}m)`;
+    return `
+      <line x1="${bPx}" y1="${padT}" x2="${bPx}" y2="${baseY}" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <rect x="${(Number(bPx)-58).toFixed(1)}" y="${padT+2}" width="116" height="16" rx="4" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1"/>
+      <text x="${bPx}" y="${padT+13}" text-anchor="middle" font-size="10" font-weight="700" fill="#7e22ce">${bLabel}</text>`;
   }).join('');
 
   // 3. 階梯折線與下方淡色面積填滿
@@ -3826,10 +3962,11 @@ function ieDrawSelectedWipChart(){
   // 6. 每個轉折座標點與每筆新數據圓點 (含隱形放大感應區 + 最高峰高亮紅點)
   const dotsHtml=plotRecords.map((p,i)=>{
     const px=x(p.t).toFixed(1), py=y(p.y).toFixed(1);
-    const elapsedSec=((p.t-a.start)/1000).toFixed(1);
-    const clockFull=new Date(p.t).toLocaleTimeString();
+    const elapsedSec=mapper.toActiveSec(p.t).toFixed(1);
+    const clockFull=new Date(p.t).toLocaleString();
     const nextT=(i<plotRecords.length-1)?plotRecords[i+1].t:p.t;
-    const holdSec=Math.max(0,(nextT-p.t)/1000).toFixed(1);
+    const rawHoldMs=Math.max(0,nextT-p.t);
+    const holdSec=(rawHoldMs>IE_IDLE_PAUSE_LIMIT_MS?0:rawHoldMs/1000).toFixed(1);
     const isPeak=(p.y===max && max>0);
     const reasons=p.isInitPoint
       ? `場次初始預設 WIP（前置工站數 × 可開工套數 = ${p.y} 件）`
@@ -3850,9 +3987,10 @@ function ieDrawSelectedWipChart(){
       </g>`;
   }).join('');
 
+  const pauseHint=mapper.breaks.length>0?`｜已自動折疊 ${mapper.breaks.length} 段跨天/中場空窗`:'';
   const axisTitleHtml=`
     <text x="${padL-46}" y="${padT-10}" text-anchor="start" font-size="12" font-weight="700" fill="#334155">▲ 在製品數量 (WIP 件數)</text>
-    <text x="${padL+plotW/2}" y="${H-6}" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">生產活動時間軸（總歷時 ${((a.end-a.start)/1000).toFixed(1)} 秒） ➔</text>`;
+    <text x="${padL+plotW/2}" y="${H-6}" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">生產活動有效時間軸（有效作業歷時 ${(mapper.totalActiveMs/1000).toFixed(1)} 秒${pauseHint}） ➔</text>`;
 
   const svg=`
     <svg id="ieWipSvg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;min-width:560px;display:block;user-select:none;" role="img" aria-label="${buffer} WIP 階梯時間圖">
@@ -3867,6 +4005,7 @@ function ieDrawSelectedWipChart(){
       <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseY}" stroke="#64748b" stroke-width="1.5"/>
       <path d="${areaPoints.join(' ')}" fill="url(#ieWipAreaGrad)"/>
       ${avgLineHtml}
+      ${breakLinesHtml}
       <path d="${points.join(' ')}" fill="none" stroke="#0d9488" stroke-width="2.6" stroke-linejoin="round"/>
       <line id="ieWipHoverVLine" x1="0" y1="${padT}" x2="0" y2="${baseY}" stroke="#0f172a" stroke-width="1" stroke-dasharray="3 3" style="display:none;pointer-events:none;"/>
       ${dotsHtml}
@@ -3952,9 +4091,17 @@ function ieUpdateReworkCost(){
 
 function ieExportWipCsv(){
   if(!ieDisplayedRun||!ieDisplayedWips.length){alert('沒有可匯出的 WIP 事件');return;}
-  const cols=['run_id','group_id','flow_key','buffer_id','station_id','action','delta','wip_after','event_id','event_time'];
+  const cols=['run_id','group_id','flow_key','buffer_id','station_id','action','delta','wip_after','event_id','event_date','event_clock','event_time'];
   const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
-  const lines=[cols.join(','),...ieDisplayedWips.map(r=>cols.map(c=>quote(r[c])).join(','))];
+  const lines=[cols.join(','),...ieDisplayedWips.map(r=>{
+    const sp=splitToTaiwanDateAndTime(r.event_time);
+    const rowWithDate={
+      ...r,
+      event_date: r.event_date || sp.date,
+      event_clock: r.event_clock || sp.clock
+    };
+    return cols.map(c=>quote(rowWithDate[c])).join(',');
+  })];
   const blob=new Blob(['\uFEFF',lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`WIP_${ieDisplayedRun.flow_key}_${String(ieDisplayedRun.id).slice(0,8)}.csv`;
